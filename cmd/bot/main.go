@@ -30,6 +30,7 @@ import (
 	"icarosu/internal/plugin/summarizer"
 	"icarosu/internal/plugin/trigger"
 	"icarosu/internal/qq"
+	"icarosu/internal/queue"
 	"icarosu/internal/ratelimit"
 	"icarosu/internal/semantic"
 	"icarosu/internal/session"
@@ -191,8 +192,11 @@ func main() {
 	go sessionMgr.CleanupLoop(ctx, time.Hour)
 	h := handler.New(client, manager, cfg.Bot.SelfID, log, handler.WithRateLimiter(limiter), handler.WithSessionManager(sessionMgr))
 
+	eventPool := queue.NewPool(4, 128)
 	client.SetMessageHandler(func(ctx context.Context, evt qq.Event) {
-		h.Handle(ctx, evt)
+		_ = eventPool.Submit(ctx, func(ctx context.Context) {
+			h.Handle(ctx, evt)
+		})
 	})
 
 	if err := manager.Start(ctx, client); err != nil {
@@ -204,6 +208,7 @@ func main() {
 			log.Error("failed to stop plugins", "error", err)
 		}
 	}()
+	defer eventPool.Close()
 
 	log.Info("connecting to OneBot", "url", cfg.QQ.OneBot.WSURL)
 	if err := client.Connect(ctx); err != nil {
