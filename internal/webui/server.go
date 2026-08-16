@@ -329,13 +329,13 @@ legend { padding: 0 8px; font-size: 15px; font-weight: 600; color: var(--accent)
 
   <section id="panel-config" class="card">
     <div class="toolbar">
-      <button class="primary" onclick="loadConfig()">加载配置</button>
+      <button class="primary" onclick="loadConfig()">刷新</button>
       <button onclick="saveConfig()">保存并热重载</button>
       <button onclick="reloadConfig()">仅热重载</button>
       <span style="color:var(--muted); font-size:13px;">修改后记得保存</span>
     </div>
     <div id="configForm" class="form-grid">
-      <p style="color:var(--muted); grid-column:1/-1;">点击“加载配置”开始编辑。</p>
+      <p style="color:var(--muted); grid-column:1/-1;">正在自动加载配置...</p>
     </div>
   </section>
 
@@ -525,6 +525,7 @@ async function loadLogs() {
 setInterval(() => {
   if (document.getElementById('autoLog').checked) loadLogs();
 }, 3000);
+loadConfig();
 loadLogs();
 </script>
 </body>
