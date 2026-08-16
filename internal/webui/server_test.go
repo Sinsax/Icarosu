@@ -92,6 +92,41 @@ func TestWebUIReloadEndpoint(t *testing.T) {
 	}
 }
 
+func TestWebUIConfigJSONUpdate(t *testing.T) {
+	path := writeTestConfig(t, "old")
+	m, err := config.NewManager(path)
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	s := webui.New(m, nil)
+
+	// 读取当前 JSON 配置并修改 bot.name
+	getReq := httptest.NewRequest(http.MethodGet, "/api/config", nil)
+	getRec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(getRec, getReq)
+	if getRec.Code != http.StatusOK {
+		t.Fatalf("get config failed: %d", getRec.Code)
+	}
+	var data map[string]any
+	if err := json.Unmarshal(getRec.Body.Bytes(), &data); err != nil {
+		t.Fatalf("decode config: %v", err)
+	}
+	bot := data["Bot"].(map[string]any)
+	bot["Name"] = "new"
+	body, _ := json.Marshal(data)
+
+	postReq := httptest.NewRequest(http.MethodPost, "/api/config", strings.NewReader(string(body)))
+	postReq.Header.Set("Content-Type", "application/json")
+	postRec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(postRec, postReq)
+	if postRec.Code != http.StatusOK {
+		t.Fatalf("update config failed: %d %s", postRec.Code, postRec.Body.String())
+	}
+	if m.Get().Bot.Name != "new" {
+		t.Fatalf("expected updated name new, got %q", m.Get().Bot.Name)
+	}
+}
+
 func TestWebUIConfigRawUpdate(t *testing.T) {
 	path := writeTestConfig(t, "old")
 	m, err := config.NewManager(path)
