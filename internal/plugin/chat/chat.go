@@ -216,6 +216,16 @@ func (p *ChatPlugin) Handle(ctx context.Context, bot plugin.Bot, e *plugin.Event
 		p.mem.RecordReply(e, reply)
 	}
 
+	if p.logger != nil {
+		p.logger.Info("bot reply",
+			"type", e.Type,
+			"group_id", e.GroupID,
+			"user_id", e.UserID,
+			"reply", reply,
+			"force_split", forceSplit,
+		)
+	}
+
 	p.sendReply(ctx, bot, e, reply, forceSplit)
 	if p.attention != nil && e.Type == plugin.EventGroupMessage {
 		p.attention.OnBotReplied(e.GroupID)
