@@ -15,6 +15,7 @@ import (
 	"icarosu/internal/meme"
 	"icarosu/internal/memory"
 	"icarosu/internal/plugin"
+	"icarosu/internal/semantic"
 	"icarosu/internal/store"
 	"icarosu/internal/style"
 	"icarosu/internal/tools"
@@ -40,6 +41,7 @@ type ChatPlugin struct {
 	mem          *memory.Memory
 	memes        *meme.Store
 	store        *store.Store
+	semantic     *semantic.Service
 	styleLib     *style.Library
 	attention    *attention.Tracker
 	logger       *slog.Logger
@@ -80,6 +82,13 @@ func WithStyleLibrary(lib *style.Library) Option {
 func WithStore(st *store.Store) Option {
 	return func(p *ChatPlugin) {
 		p.store = st
+	}
+}
+
+// WithSemantic 设置语义记忆服务，用于按当前话题检索相关长期记忆。
+func WithSemantic(svc *semantic.Service) Option {
+	return func(p *ChatPlugin) {
+		p.semantic = svc
 	}
 }
 
@@ -148,7 +157,7 @@ func (p *ChatPlugin) Handle(ctx context.Context, bot plugin.Bot, e *plugin.Event
 		)
 	}
 
-	messages := p.buildMessages(e, userMessage)
+	messages := p.buildMessages(ctx, e, userMessage)
 
 	var reply string
 	var err error
@@ -361,6 +370,29 @@ func hasTag(tags []string, target string) bool {
 	return false
 }
 
+// semanticMemories 优先按当前消息语义检索长期记忆；没有向量结果时退回最近长期记忆。
+func (p *ChatPlugin) semanticMemories(ctx context.Context, groupID int64, query string) string {
+	if p.semantic != nil {
+		records, err := p.semantic.Search(ctx, groupID, query, 5)
+		if err == nil && len(records) > 0 {
+			var contents []string
+			for _, r := range records {
+				contents = append(contents, r.Content)
+			}
+			return "你对这个群的长期记忆：\n" + strings.Join(contents, "\n")
+		}
+	}
+
+	if p.mem == nil {
+		return ""
+	}
+	memories := p.mem.LongTermMemories(groupID, 5)
+	if len(memories) == 0 {
+		return ""
+	}
+	return "你对这个群的长期记忆：\n" + strings.Join(memories, "\n")
+}
+
 // groupDataContext 把已收集的活跃时间/互动/事件作为上下文载入。
 func (p *ChatPlugin) groupDataContext(e *plugin.Event) string {
 	var hints []string
@@ -396,7 +428,7 @@ func (p *ChatPlugin) groupDataContext(e *plugin.Event) string {
 }
 
 // buildMessages 组装发给 LLM 的消息，包含系统人设、长期记忆和最近群聊上下文。
-func (p *ChatPlugin) buildMessages(e *plugin.Event, currentMessage string) []llm.Message {
+func (p *ChatPlugin) buildMessages(ctx context.Context, e *plugin.Event, currentMessage string) []llm.Message {
 	messages := []llm.Message{
 		{Role: "system", Content: p.systemPrompt},
 	}
@@ -419,8 +451,8 @@ func (p *ChatPlugin) buildMessages(e *plugin.Event, currentMessage string) []llm
 	}
 
 	if e.Type == plugin.EventGroupMessage {
-		if memories := p.mem.LongTermMemories(e.GroupID, 5); len(memories) > 0 {
-			memoryText := "你对这个群的长期记忆：\n" + strings.Join(memories, "\n")
+		memoryText := p.semanticMemories(ctx, e.GroupID, currentMessage)
+		if memoryText != "" {
 			messages = append(messages, llm.Message{Role: "system", Content: memoryText})
 		}
 

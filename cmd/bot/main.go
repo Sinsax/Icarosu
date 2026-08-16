@@ -31,6 +31,7 @@ import (
 	"icarosu/internal/plugin/trigger"
 	"icarosu/internal/qq"
 	"icarosu/internal/ratelimit"
+	"icarosu/internal/semantic"
 	"icarosu/internal/session"
 	"icarosu/internal/store"
 	"icarosu/internal/style"
@@ -91,6 +92,11 @@ func main() {
 	mem.SetContextMaxAge(cfg.Memory.ContextMaxAgeMinutes)
 	mem.PreloadFromStore(cfg.Memory.ShortTermSize)
 
+	var semanticSvc *semantic.Service
+	if st != nil {
+		semanticSvc = semantic.NewService(st, semantic.NewLocalEmbedder(256), log)
+	}
+
 	attentionTracker := attention.New(cfg.Attention)
 
 	// VLM 通用图片识别链路：只要配置了 vlm 且能连通，就自动开启“图片理解 + 表情库”
@@ -144,7 +150,11 @@ func main() {
 		manager.Register(steal.New(cfg.Meme, visionSvc, personaPrompt, steal.WithLogger(log)))
 	}
 	if st != nil && llmClient != nil {
-		manager.Register(summarizer.New(llmClient, mem, st, cfg.Memory, summarizer.WithLogger(log)))
+		summarizerOpts := []summarizer.Option{summarizer.WithLogger(log)}
+		if semanticSvc != nil {
+			summarizerOpts = append(summarizerOpts, summarizer.WithSemantic(semanticSvc))
+		}
+		manager.Register(summarizer.New(llmClient, mem, st, cfg.Memory, summarizerOpts...))
 	}
 	manager.Register(trigger.New(cfg.Bot,
 		trigger.WithLogger(log),
@@ -167,6 +177,9 @@ func main() {
 	}
 	if st != nil {
 		chatOpts = append(chatOpts, chat.WithStore(st))
+	}
+	if semanticSvc != nil {
+		chatOpts = append(chatOpts, chat.WithSemantic(semanticSvc))
 	}
 	if memeStore != nil {
 		chatOpts = append(chatOpts, chat.WithMemes(memeStore))

@@ -11,17 +11,19 @@ import (
 	"icarosu/internal/llm"
 	"icarosu/internal/memory"
 	"icarosu/internal/plugin"
+	"icarosu/internal/semantic"
 	"icarosu/internal/store"
 )
 
 // SummarizerPlugin 定期或在消息量达到阈值时总结群聊，写入长期记忆。
 type SummarizerPlugin struct {
 	plugin.BasePlugin
-	client *llm.Client
-	mem    *memory.Memory
-	store  *store.Store
-	cfg    config.MemoryConfig
-	logger *slog.Logger
+	client   *llm.Client
+	mem      *memory.Memory
+	store    *store.Store
+	semantic *semantic.Service
+	cfg      config.MemoryConfig
+	logger   *slog.Logger
 
 	mu          sync.Mutex
 	counts      map[int64]int
@@ -35,6 +37,13 @@ type Option func(*SummarizerPlugin)
 func WithLogger(logger *slog.Logger) Option {
 	return func(p *SummarizerPlugin) {
 		p.logger = logger
+	}
+}
+
+// WithSemantic 设置语义记忆服务。
+func WithSemantic(svc *semantic.Service) Option {
+	return func(p *SummarizerPlugin) {
+		p.semantic = svc
 	}
 }
 
@@ -129,9 +138,15 @@ func (p *SummarizerPlugin) summarize(ctx context.Context, groupID int64) {
 		return
 	}
 
-	if err := p.store.SaveMemory(groupID, 0, summary); err != nil {
+	var saveErr error
+	if p.semantic != nil {
+		saveErr = p.semantic.SaveMemory(ctx, groupID, 0, summary)
+	} else {
+		saveErr = p.store.SaveMemory(groupID, 0, summary)
+	}
+	if saveErr != nil {
 		if p.logger != nil {
-			p.logger.Warn("save summary failed", "group_id", groupID, "error", err)
+			p.logger.Warn("save summary failed", "group_id", groupID, "error", saveErr)
 		}
 		return
 	}

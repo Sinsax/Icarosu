@@ -61,6 +61,38 @@ func TestStoreCRUD(t *testing.T) {
 	}
 }
 
+func TestStoreMemoryVectorSearch(t *testing.T) {
+	dir, err := os.MkdirTemp(".", ".store-vector-test-")
+	if err != nil {
+		t.Fatalf("create temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+
+	s, err := store.Open(config.StoreConfig{Driver: "sqlite", DSN: filepath.Join(dir, "bot.db")})
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+
+	if _, err := s.SaveMemoryWithVector(100, 200, "小明喜欢看番", []float32{1, 0, 0}); err != nil {
+		t.Fatalf("save vector memory: %v", err)
+	}
+	if _, err := s.SaveMemoryWithVector(100, 200, "今天天气不错", []float32{0, 1, 0}); err != nil {
+		t.Fatalf("save vector memory 2: %v", err)
+	}
+
+	records, err := s.SearchMemories(100, []float32{1, 0, 0}, 5)
+	if err != nil {
+		t.Fatalf("search memories: %v", err)
+	}
+	if len(records) != 2 {
+		t.Fatalf("expected 2 vector memories, got %d", len(records))
+	}
+	if records[0].Content != "小明喜欢看番" || records[0].Score < 0.99 {
+		t.Fatalf("unexpected top memory: %+v", records[0])
+	}
+}
+
 func TestStoreRelationData(t *testing.T) {
 	dir, err := os.MkdirTemp(".", ".store-relation-test-")
 	if err != nil {
