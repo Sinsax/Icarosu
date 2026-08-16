@@ -37,6 +37,7 @@ import (
 	"icarosu/internal/store"
 	"icarosu/internal/style"
 	"icarosu/internal/tools"
+	"icarosu/internal/topic"
 	"icarosu/internal/vision"
 	"icarosu/internal/vlm"
 	"icarosu/internal/webui"
@@ -99,6 +100,7 @@ func main() {
 	if st != nil {
 		semanticSvc = semantic.NewService(st, semantic.NewLocalEmbedder(256), log)
 	}
+	topicTracker := topic.NewTracker(semantic.NewLocalEmbedder(256), 0)
 
 	attentionTracker := attention.New(cfg.Attention)
 
@@ -139,7 +141,7 @@ func main() {
 	}
 	filterPlugin := filter.New(cfg.Filter, filter.WithLogger(log))
 	manager.Register(filterPlugin)
-	recorderOpts := []recorder.Option{recorder.WithLogger(log)}
+	recorderOpts := []recorder.Option{recorder.WithLogger(log), recorder.WithTopicTracker(topicTracker)}
 	if st != nil {
 		recorderOpts = append(recorderOpts, recorder.WithStore(st))
 	}
@@ -179,6 +181,7 @@ func main() {
 		chat.WithLogger(log),
 		chat.WithStyleLibrary(styleLib),
 		chat.WithAttention(attentionTracker),
+		chat.WithTopicTracker(topicTracker),
 	}
 	if st != nil {
 		chatOpts = append(chatOpts, chat.WithStore(st))

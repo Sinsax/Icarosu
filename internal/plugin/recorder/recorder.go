@@ -8,6 +8,7 @@ import (
 	"icarosu/internal/memory"
 	"icarosu/internal/plugin"
 	"icarosu/internal/store"
+	"icarosu/internal/topic"
 	"icarosu/internal/vision"
 )
 
@@ -16,10 +17,11 @@ import (
 // 同时收集引用回复、撤回、活跃时间段、互动关系。
 type RecorderPlugin struct {
 	plugin.BasePlugin
-	mem    *memory.Memory
-	store  *store.Store
-	vision *vision.Service
-	logger *slog.Logger
+	mem     *memory.Memory
+	store   *store.Store
+	vision  *vision.Service
+	topic   *topic.Tracker
+	logger  *slog.Logger
 }
 
 // Option 用于配置 RecorderPlugin。
@@ -43,6 +45,13 @@ func WithVision(v *vision.Service) Option {
 func WithLogger(logger *slog.Logger) Option {
 	return func(p *RecorderPlugin) {
 		p.logger = logger
+	}
+}
+
+// WithTopicTracker 设置话题稳定性跟踪器。
+func WithTopicTracker(t *topic.Tracker) Option {
+	return func(p *RecorderPlugin) {
+		p.topic = t
 	}
 }
 
@@ -92,6 +101,14 @@ func (p *RecorderPlugin) Handle(ctx context.Context, _ plugin.Bot, e *plugin.Eve
 	}
 
 	p.mem.RecordIncoming(e)
+
+	if p.topic != nil {
+		key := e.GroupID
+		if e.Type == plugin.EventPrivateMessage {
+			key = e.UserID
+		}
+		p.topic.Observe(ctx, key, e.RawMessage)
+	}
 
 	if p.store != nil && e.Type == plugin.EventGroupMessage {
 		_ = p.store.RecordActivity(e.GroupID, e.UserID, time.Now())

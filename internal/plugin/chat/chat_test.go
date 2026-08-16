@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -13,6 +14,8 @@ import (
 	"icarosu/internal/llm"
 	"icarosu/internal/plugin"
 	"icarosu/internal/plugin/chat"
+	"icarosu/internal/semantic"
+	"icarosu/internal/topic"
 )
 
 type mockBot struct {
@@ -115,5 +118,43 @@ func TestChatHandlesPrivateMessage(t *testing.T) {
 	}
 	if len(bot.private) != 1 || bot.private[0] != "你好呀" {
 		t.Fatalf("unexpected private messages: %v", bot.private)
+	}
+}
+
+func TestChatIncludesTopicStabilityHint(t *testing.T) {
+	var got string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		got = string(body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"看番呢"}}]}`))
+	}))
+	t.Cleanup(server.Close)
+
+	client := llm.NewClient(llm.Config{
+		BaseURL: server.URL,
+		Model:   "test-model",
+		Timeout: 5 * time.Second,
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	tr := topic.NewTracker(semantic.NewLocalEmbedder(128), 0.55)
+	ctx := context.Background()
+	tr.Observe(ctx, 123, "看什么番")
+	tr.Observe(ctx, 123, "看什么番")
+	tr.RecordReply(ctx, 123, "看番呢，别催")
+
+	p := chat.New(client, "你是群友", chat.WithTopicTracker(tr))
+	bot := &mockBot{}
+	if !p.Handle(ctx, bot, &plugin.Event{
+		Type:       plugin.EventGroupMessage,
+		GroupID:    123,
+		RawMessage: "看什么番",
+		AtBot:      true,
+	}) {
+		t.Fatal("should handle message")
+	}
+
+	if !strings.Contains(got, "当前稳定话题") || !strings.Contains(got, "看番呢，别催") {
+		t.Fatalf("expected topic stability hint in LLM request, got: %s", got)
 	}
 }

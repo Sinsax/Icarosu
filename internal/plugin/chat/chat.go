@@ -19,6 +19,7 @@ import (
 	"icarosu/internal/store"
 	"icarosu/internal/style"
 	"icarosu/internal/tools"
+	"icarosu/internal/topic"
 )
 
 var (
@@ -44,6 +45,7 @@ type ChatPlugin struct {
 	semantic     *semantic.Service
 	styleLib     *style.Library
 	attention    *attention.Tracker
+	topic        *topic.Tracker
 	logger       *slog.Logger
 }
 
@@ -89,6 +91,13 @@ func WithStore(st *store.Store) Option {
 func WithSemantic(svc *semantic.Service) Option {
 	return func(p *ChatPlugin) {
 		p.semantic = svc
+	}
+}
+
+// WithTopicTracker 设置话题稳定性跟踪器。
+func WithTopicTracker(t *topic.Tracker) Option {
+	return func(p *ChatPlugin) {
+		p.topic = t
 	}
 }
 
@@ -193,6 +202,14 @@ func (p *ChatPlugin) Handle(ctx context.Context, bot plugin.Bot, e *plugin.Event
 			truncated = p.polishReply(ctx, reply)
 		}
 		reply = truncated
+	}
+
+	if p.topic != nil {
+		key := e.GroupID
+		if e.Type == plugin.EventPrivateMessage {
+			key = e.UserID
+		}
+		p.topic.RecordReply(ctx, key, reply)
 	}
 
 	if p.mem != nil {
@@ -450,6 +467,16 @@ func (p *ChatPlugin) buildMessages(ctx context.Context, e *plugin.Event, current
 			if samples := p.styleLib.SampleByTags(tags, 3); len(samples) > 0 {
 				messages = append(messages, llm.Message{Role: "system", Content: "参考表达方式：\n" + strings.Join(samples, "\n")})
 			}
+		}
+	}
+
+	if p.topic != nil {
+		key := e.GroupID
+		if e.Type == plugin.EventPrivateMessage {
+			key = e.UserID
+		}
+		if hint := p.topic.Hint(ctx, key, currentMessage); hint != "" {
+			messages = append(messages, llm.Message{Role: "system", Content: hint})
 		}
 	}
 
