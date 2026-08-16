@@ -47,7 +47,7 @@ func WithSemantic(svc *semantic.Service) Option {
 	}
 }
 
-func New(client *llm.Client, mem *memory.Memory, st *store.Store, cfg config.MemoryConfig, opts ...Option) plugin.Plugin {
+func New(client *llm.Client, mem *memory.Memory, st *store.Store, cfg config.MemoryConfig, opts ...Option) *SummarizerPlugin {
 	p := &SummarizerPlugin{
 		client:      client,
 		mem:         mem,
@@ -106,6 +106,11 @@ func (p *SummarizerPlugin) Handle(ctx context.Context, _ plugin.Bot, e *plugin.E
 		p.summarize(ctx, e.GroupID)
 	}
 	return false
+}
+
+// SummarizeGroup 手动触发一次群总结。
+func (p *SummarizerPlugin) SummarizeGroup(ctx context.Context, groupID int64) {
+	p.summarize(ctx, groupID)
 }
 
 func (p *SummarizerPlugin) summarize(ctx context.Context, groupID int64) {

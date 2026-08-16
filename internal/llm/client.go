@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -109,6 +110,26 @@ type Client struct {
 	config Config
 	http   *http.Client
 	logger *slog.Logger
+
+	requests atomic.Int64
+	tokens   atomic.Int64
+	errors   atomic.Int64
+}
+
+// Stats 是 LLM 客户端的累计统计。
+type Stats struct {
+	Requests int64 `json:"requests"`
+	Tokens   int64 `json:"tokens"`
+	Errors   int64 `json:"errors"`
+}
+
+// Stats 返回当前累计统计。
+func (c *Client) Stats() Stats {
+	return Stats{
+		Requests: c.requests.Load(),
+		Tokens:   c.tokens.Load(),
+		Errors:   c.errors.Load(),
+	}
 }
 
 func NewClient(cfg Config, logger *slog.Logger) *Client {
@@ -234,7 +255,14 @@ func shouldRetryLLM(err error) bool {
 }
 
 // Complete 发送一次请求，返回包含思考过程、文本和工具调用的完整响应。
-func (c *Client) Complete(ctx context.Context, messages []Message, tools []Tool) (*Response, error) {
+func (c *Client) Complete(ctx context.Context, messages []Message, tools []Tool) (resp *Response, err error) {
+	c.requests.Add(1)
+	defer func() {
+		if err != nil {
+			c.errors.Add(1)
+		}
+	}()
+
 	if c.config.BaseURL == "" {
 		return nil, fmt.Errorf("llm base_url is empty")
 	}
@@ -267,19 +295,19 @@ func (c *Client) Complete(ctx context.Context, messages []Message, tools []Tool)
 
 	c.logger.Debug("llm request", "model", c.config.Model, "messages", len(messages), "tools", len(tools))
 
-	resp, err := c.http.Do(req)
+	httpResp, err := c.http.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("call llm api: %w", err)
 	}
-	defer resp.Body.Close()
+	defer httpResp.Body.Close()
 
-	data, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	data, err := io.ReadAll(io.LimitReader(httpResp.Body, 4<<20))
 	if err != nil {
 		return nil, fmt.Errorf("read llm response: %w", err)
 	}
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("llm api returned %d: %s", resp.StatusCode, strings.TrimSpace(string(data)))
+	if httpResp.StatusCode < 200 || httpResp.StatusCode >= 300 {
+		return nil, fmt.Errorf("llm api returned %d: %s", httpResp.StatusCode, strings.TrimSpace(string(data)))
 	}
 
 	var result chatResponse
@@ -294,6 +322,10 @@ func (c *Client) Complete(ctx context.Context, messages []Message, tools []Tool)
 	}
 
 	msg := result.Choices[0].Message
+
+	if result.Usage != nil {
+		c.tokens.Add(int64(result.Usage.TotalTokens))
+	}
 
 	if c.config.LogCache && result.Usage != nil {
 		hit := result.Usage.PromptCacheHitTokens

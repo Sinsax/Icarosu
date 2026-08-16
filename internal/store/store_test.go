@@ -93,6 +93,37 @@ func TestStoreMemoryVectorSearch(t *testing.T) {
 	}
 }
 
+func TestStoreTopicStatePersistence(t *testing.T) {
+	dir, err := os.MkdirTemp(".", ".store-topic-test-")
+	if err != nil {
+		t.Fatalf("create temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+
+	s, err := store.Open(config.StoreConfig{Driver: "sqlite", DSN: filepath.Join(dir, "bot.db")})
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+
+	now := time.Now()
+	if err := s.SaveTopicState(100, "看什么番", "看什么番", "看番呢，别催", 2, []float32{1, 0, 0}, now); err != nil {
+		t.Fatalf("save topic state: %v", err)
+	}
+
+	records, err := s.LoadTopicStates()
+	if err != nil {
+		t.Fatalf("load topic states: %v", err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("expected 1 topic state, got %d", len(records))
+	}
+	r := records[0]
+	if r.GroupID != 100 || r.Topic != "看什么番" || r.LastReply != "看番呢，别催" || r.Stability != 2 {
+		t.Fatalf("unexpected topic state: %+v", r)
+	}
+}
+
 func TestStoreRelationData(t *testing.T) {
 	dir, err := os.MkdirTemp(".", ".store-relation-test-")
 	if err != nil {

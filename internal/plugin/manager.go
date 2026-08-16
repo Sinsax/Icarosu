@@ -9,12 +9,22 @@ import (
 
 // Manager 负责插件的注册、生命周期管理和事件分发。
 type Manager struct {
-	mu      sync.RWMutex
-	plugins []Plugin
+	mu       sync.RWMutex
+	plugins  []Plugin
+	disabled map[string]bool
+}
+
+// PluginState 是插件运行状态，用于管理界面展示和热开关。
+type PluginState struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Stage       Stage  `json:"stage"`
+	Priority    int    `json:"priority"`
+	Enabled     bool   `json:"enabled"`
 }
 
 func NewManager() *Manager {
-	return &Manager{}
+	return &Manager{disabled: make(map[string]bool)}
 }
 
 // Register 注册一个插件。插件按 Priority 从高到低执行。
@@ -27,11 +37,46 @@ func (m *Manager) Register(p Plugin) {
 	m.plugins = append(m.plugins, p)
 }
 
-// Start 按优先级顺序初始化所有插件。
-func (m *Manager) Start(ctx context.Context, bot Bot) error {
+// SetEnabled 动态启用或禁用插件。
+func (m *Manager) SetEnabled(name string, enabled bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if enabled {
+		delete(m.disabled, name)
+	} else {
+		m.disabled[name] = true
+	}
+}
+
+// States 返回所有插件状态（按优先级排序）。
+func (m *Manager) States() []PluginState {
 	m.mu.RLock()
+	defer m.mu.RUnlock()
 	plugins := make([]Plugin, len(m.plugins))
 	copy(plugins, m.plugins)
+	sortPlugins(plugins)
+
+	states := make([]PluginState, 0, len(plugins))
+	for _, p := range plugins {
+		states = append(states, PluginState{
+			Name:        p.Name(),
+			Description: p.Description(),
+			Stage:       p.Stage(),
+			Priority:    p.Priority(),
+			Enabled:     !m.disabled[p.Name()],
+		})
+	}
+	return states
+}
+
+func (m *Manager) isEnabled(name string) bool {
+	return !m.disabled[name]
+}
+
+// Start 按优先级顺序初始化所有启用的插件。
+func (m *Manager) Start(ctx context.Context, bot Bot) error {
+	m.mu.RLock()
+	plugins := m.enabledPluginsLocked()
 	m.mu.RUnlock()
 
 	sortPlugins(plugins)
@@ -44,11 +89,10 @@ func (m *Manager) Start(ctx context.Context, bot Bot) error {
 	return nil
 }
 
-// Stop 逆序停止所有插件。
+// Stop 逆序停止所有启用的插件。
 func (m *Manager) Stop(ctx context.Context) error {
 	m.mu.RLock()
-	plugins := make([]Plugin, len(m.plugins))
-	copy(plugins, m.plugins)
+	plugins := m.enabledPluginsLocked()
 	m.mu.RUnlock()
 
 	sortPlugins(plugins)
@@ -69,8 +113,7 @@ func (m *Manager) Stop(ctx context.Context) error {
 // 每个阶段内部仍按 Priority 从高到低执行。
 func (m *Manager) Dispatch(ctx context.Context, bot Bot, e *Event) {
 	m.mu.RLock()
-	plugins := make([]Plugin, len(m.plugins))
-	copy(plugins, m.plugins)
+	plugins := m.enabledPluginsLocked()
 	m.mu.RUnlock()
 
 	sortPlugins(plugins)
@@ -95,6 +138,16 @@ func (m *Manager) Plugins() []Plugin {
 	plugins := make([]Plugin, len(m.plugins))
 	copy(plugins, m.plugins)
 	sortPlugins(plugins)
+	return plugins
+}
+
+func (m *Manager) enabledPluginsLocked() []Plugin {
+	plugins := make([]Plugin, 0, len(m.plugins))
+	for _, p := range m.plugins {
+		if !m.disabled[p.Name()] {
+			plugins = append(plugins, p)
+		}
+	}
 	return plugins
 }
 

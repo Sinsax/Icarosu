@@ -13,6 +13,7 @@ type Buffer struct {
 	mu     sync.Mutex
 	lines  []string
 	max    int
+	subs   map[chan string]struct{}
 }
 
 // NewBuffer 创建一个最多保存 max 行的日志缓冲。
@@ -20,10 +21,10 @@ func NewBuffer(max int) *Buffer {
 	if max <= 0 {
 		max = 500
 	}
-	return &Buffer{max: max}
+	return &Buffer{max: max, subs: make(map[chan string]struct{})}
 }
 
-// Write 实现 io.Writer，把日志文本写入环形缓冲。
+// Write 实现 io.Writer，把日志文本写入环形缓冲，并推送给订阅者。
 func (b *Buffer) Write(p []byte) (int, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -37,8 +38,32 @@ func (b *Buffer) Write(p []byte) (int, error) {
 		if len(b.lines) > b.max {
 			b.lines = b.lines[len(b.lines)-b.max:]
 		}
+		for ch := range b.subs {
+			select {
+			case ch <- line:
+			default:
+			}
+		}
 	}
 	return len(p), nil
+}
+
+// Subscribe 订阅新的日志行。返回的取消函数会关闭订阅通道。
+func (b *Buffer) Subscribe() (<-chan string, func()) {
+	ch := make(chan string, 64)
+	b.mu.Lock()
+	b.subs[ch] = struct{}{}
+	b.mu.Unlock()
+
+	cancel := func() {
+		b.mu.Lock()
+		if _, ok := b.subs[ch]; ok {
+			delete(b.subs, ch)
+			close(ch)
+		}
+		b.mu.Unlock()
+	}
+	return ch, cancel
 }
 
 // Recent 返回最近最多 limit 行日志。

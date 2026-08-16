@@ -104,6 +104,46 @@ func (s *Store) Count() int {
 	return len(s.items)
 }
 
+// List 返回当前表情库中的所有文件路径。
+func (s *Store) List() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]string, len(s.items))
+	copy(out, s.items)
+	return out
+}
+
+// Resolve 校验并规范化表情库内文件路径。
+func (s *Store) Resolve(path string) (string, error) {
+	clean := filepath.Clean(path)
+	base := filepath.Clean(s.dir)
+	if clean != base && !strings.HasPrefix(clean, base+string(filepath.Separator)) {
+		return "", fmt.Errorf("path outside meme library: %s", path)
+	}
+	return clean, nil
+}
+
+// Delete 删除表情库中的某个文件。只允许删除库目录内的文件。
+func (s *Store) Delete(path string) error {
+	clean, err := s.Resolve(path)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(clean); err != nil {
+		return fmt.Errorf("delete meme: %w", err)
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i, item := range s.items {
+		if filepath.Clean(item) == clean {
+			s.items = append(s.items[:i], s.items[i+1:]...)
+			break
+		}
+	}
+	return nil
+}
+
 func extFromURL(raw string) string {
 	path := raw
 	if idx := strings.Index(raw, "?"); idx >= 0 {

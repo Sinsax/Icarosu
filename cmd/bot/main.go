@@ -18,6 +18,7 @@ import (
 	"icarosu/internal/memory"
 	"icarosu/internal/persona"
 	"icarosu/internal/platform"
+	"icarosu/internal/platform/telegram"
 	"icarosu/internal/plugin"
 	"icarosu/internal/plugin/admin"
 	_ "icarosu/internal/plugin/builtin"
@@ -100,7 +101,11 @@ func main() {
 	if st != nil {
 		semanticSvc = semantic.NewService(st, semantic.NewLocalEmbedder(256), log)
 	}
-	topicTracker := topic.NewTracker(semantic.NewLocalEmbedder(256), 0)
+	topicOpts := []topic.Option{}
+	if st != nil {
+		topicOpts = append(topicOpts, topic.WithStore(st))
+	}
+	topicTracker := topic.NewTracker(semantic.NewLocalEmbedder(256), 0, topicOpts...)
 
 	attentionTracker := attention.New(cfg.Attention)
 
@@ -131,7 +136,14 @@ func main() {
 
 	personaPrompt := persona.BuildSystemPrompt(cfg.Bot)
 
-	var client platform.Adapter = qq.NewClient(cfg.QQ.OneBot.WSURL, cfg.QQ.OneBot.AccessToken, log)
+	var client platform.Adapter
+	var qqClient *qq.Client
+	if cfg.Telegram.Enabled {
+		client = telegram.NewClient(cfg.Telegram.Token, log)
+	} else {
+		qqClient = qq.NewClient(cfg.QQ.OneBot.WSURL, cfg.QQ.OneBot.AccessToken, log)
+		client = qqClient
+	}
 
 	// 插件管理器：后续所有扩展（AI 聊天、管理、娱乐等）都以插件形式注册到这里。
 	// 简单插件可通过 init() 自注册到全局注册表；需要依赖的插件在 main 中显式构造注册。
@@ -149,18 +161,20 @@ func main() {
 		recorderOpts = append(recorderOpts, recorder.WithVision(visionSvc))
 	}
 	manager.Register(recorder.New(mem, recorderOpts...))
-	if st != nil {
-		manager.Register(membersync.New(client.(*qq.Client), st, membersync.WithLogger(log)))
+	if st != nil && qqClient != nil {
+		manager.Register(membersync.New(qqClient, st, membersync.WithLogger(log)))
 	}
 	if memeStore != nil && visionSvc != nil {
 		manager.Register(steal.New(cfg.Meme, visionSvc, personaPrompt, steal.WithLogger(log)))
 	}
+	var summarizerPlugin *summarizer.SummarizerPlugin
 	if st != nil && llmClient != nil {
 		summarizerOpts := []summarizer.Option{summarizer.WithLogger(log)}
 		if semanticSvc != nil {
 			summarizerOpts = append(summarizerOpts, summarizer.WithSemantic(semanticSvc))
 		}
-		manager.Register(summarizer.New(llmClient, mem, st, cfg.Memory, summarizerOpts...))
+		summarizerPlugin = summarizer.New(llmClient, mem, st, cfg.Memory, summarizerOpts...)
+		manager.Register(summarizerPlugin)
 	}
 	triggerPlugin := trigger.New(cfg.Bot,
 		trigger.WithLogger(log),
@@ -195,6 +209,8 @@ func main() {
 	chatPlugin := chat.New(llmClient, personaPrompt, chatOpts...)
 	manager.Register(chatPlugin)
 
+	limiter := ratelimit.New(cfg.RateLimit.Rate, cfg.RateLimit.Burst)
+
 	cfgMgr.OnReload(func(cfg *config.Config) {
 		llmClient.UpdateConfig(llm.Config{
 			BaseURL:        cfg.LLM.BaseURL,
@@ -210,18 +226,28 @@ func main() {
 		filterPlugin.Update(cfg.Filter)
 		triggerPlugin.Update(cfg.Bot)
 		attentionTracker.Update(cfg.Attention)
+		limiter.Update(cfg.RateLimit.Rate, cfg.RateLimit.Burst)
 		chatPlugin.UpdatePersona(persona.BuildSystemPrompt(cfg.Bot))
 		log.Info("config hot reloaded")
 	})
 
-	limiter := ratelimit.New(5, 10)
 	sessionMgr := session.New(24 * time.Hour)
 	go sessionMgr.CleanupLoop(ctx, time.Hour)
 	h := handler.New(client, manager, cfg.Bot.SelfID, log, handler.WithRateLimiter(limiter), handler.WithSessionManager(sessionMgr))
 
-	eventPool := queue.NewPool(4, 128)
+	eventPool := queue.NewPool(cfg.Queue.Workers, cfg.Queue.Buffer)
 	if cfg.WebUI.Enabled {
-		webServer := webui.New(cfgMgr, log, webui.WithLogBuffer(logBuf))
+		webuiOpts := []webui.Option{webui.WithLogBuffer(logBuf), webui.WithAttention(attentionTracker), webui.WithLLM(llmClient), webui.WithPluginManager(manager), webui.WithMemory(mem), webui.WithBot(client)}
+		if st != nil {
+			webuiOpts = append(webuiOpts, webui.WithStore(st))
+		}
+		if memeStore != nil {
+			webuiOpts = append(webuiOpts, webui.WithMemeStore(memeStore))
+		}
+		if summarizerPlugin != nil {
+			webuiOpts = append(webuiOpts, webui.WithSummarizer(summarizerPlugin))
+		}
+		webServer := webui.New(cfgMgr, log, webuiOpts...)
 		if err := webServer.Start(); err != nil {
 			log.Error("failed to start webui", "error", err)
 			os.Exit(1)
@@ -246,9 +272,13 @@ func main() {
 	}()
 	defer eventPool.Close()
 
-	log.Info("connecting to OneBot", "url", cfg.QQ.OneBot.WSURL)
+	if cfg.Telegram.Enabled {
+		log.Info("connecting to Telegram")
+	} else {
+		log.Info("connecting to OneBot", "url", cfg.QQ.OneBot.WSURL)
+	}
 	if err := client.Connect(ctx); err != nil {
-		log.Error("failed to connect OneBot", "error", err)
+		log.Error("failed to connect platform", "error", err)
 		os.Exit(1)
 	}
 

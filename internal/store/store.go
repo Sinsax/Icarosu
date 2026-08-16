@@ -48,6 +48,17 @@ type MemoryRecord struct {
 	Score     float64
 }
 
+// TopicStateRecord 是持久化的话题状态。
+type TopicStateRecord struct {
+	GroupID     int64
+	Topic       string
+	LastUserMsg string
+	LastReply   string
+	Stability   int
+	Vector      []float32
+	UpdatedAt   time.Time
+}
+
 // EventRecord 是事件记录，用于把人-事件关系图化。
 type EventRecord struct {
 	ID        int64
@@ -140,6 +151,18 @@ func (s *Store) migrate() error {
 			}
 		}
 		if _, err := s.db.Exec(`INSERT INTO schema_version (version) VALUES (2)`); err != nil {
+			return fmt.Errorf("write schema version: %w", err)
+		}
+		version = 2
+	}
+
+	if version < 3 {
+		for _, stmt := range v3SchemaStatements() {
+			if _, err := s.db.Exec(stmt); err != nil {
+				return fmt.Errorf("migrate store to v3: %w", err)
+			}
+		}
+		if _, err := s.db.Exec(`INSERT INTO schema_version (version) VALUES (3)`); err != nil {
 			return fmt.Errorf("write schema version: %w", err)
 		}
 	}
@@ -235,6 +258,20 @@ func v2SchemaStatements() []string {
 			created_at DATETIME NOT NULL
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_memory_embeddings_group ON memory_embeddings(group_id)`,
+	}
+}
+
+func v3SchemaStatements() []string {
+	return []string{
+		`CREATE TABLE IF NOT EXISTS topic_states (
+			group_id INTEGER PRIMARY KEY,
+			topic TEXT NOT NULL DEFAULT '',
+			last_user_msg TEXT NOT NULL DEFAULT '',
+			last_reply TEXT NOT NULL DEFAULT '',
+			stability INTEGER NOT NULL DEFAULT 0,
+			vector TEXT NOT NULL DEFAULT '',
+			updated_at DATETIME NOT NULL
+		)`,
 	}
 }
 
@@ -453,6 +490,33 @@ func (s *Store) RecentMessages(groupID int64, limit int) ([]MessageRecord, error
 	return records, nil
 }
 
+// CountMessages 返回消息总数。
+func (s *Store) CountMessages() (int, error) {
+	var n int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count messages: %w", err)
+	}
+	return n, nil
+}
+
+// CountMemories 返回长期记忆总数。
+func (s *Store) CountMemories() (int, error) {
+	var n int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM memories`).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count memories: %w", err)
+	}
+	return n, nil
+}
+
+// CountMembers 返回已记录的成员总数。
+func (s *Store) CountMembers() (int, error) {
+	var n int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM members`).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count members: %w", err)
+	}
+	return n, nil
+}
+
 // GroupIDs 返回数据库中出现过的所有群号。
 func (s *Store) GroupIDs() ([]int64, error) {
 	rows, err := s.db.Query(`SELECT DISTINCT group_id FROM messages ORDER BY group_id`)
@@ -632,6 +696,52 @@ func (s *Store) SearchMemories(groupID int64, query []float32, limit int) ([]Mem
 	return scored, nil
 }
 
+// SaveTopicState 保存某个群的话题状态。
+func (s *Store) SaveTopicState(groupID int64, topicText, lastUserMsg, lastReply string, stability int, vector []float32, updatedAt time.Time) error {
+	data, err := json.Marshal(vector)
+	if err != nil {
+		return fmt.Errorf("encode topic vector: %w", err)
+	}
+	_, err = s.db.Exec(`
+		INSERT INTO topic_states (group_id, topic, last_user_msg, last_reply, stability, vector, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(group_id) DO UPDATE SET
+			topic = excluded.topic,
+			last_user_msg = excluded.last_user_msg,
+			last_reply = excluded.last_reply,
+			stability = excluded.stability,
+			vector = excluded.vector,
+			updated_at = excluded.updated_at
+	`, groupID, topicText, lastUserMsg, lastReply, stability, string(data), updatedAt)
+	if err != nil {
+		return fmt.Errorf("save topic state: %w", err)
+	}
+	return nil
+}
+
+// LoadTopicStates 加载所有已保存的话题状态。
+func (s *Store) LoadTopicStates() ([]TopicStateRecord, error) {
+	rows, err := s.db.Query(`SELECT group_id, topic, last_user_msg, last_reply, stability, vector, updated_at FROM topic_states`)
+	if err != nil {
+		return nil, fmt.Errorf("query topic states: %w", err)
+	}
+	defer rows.Close()
+
+	var records []TopicStateRecord
+	for rows.Next() {
+		var r TopicStateRecord
+		var vectorJSON string
+		if err := rows.Scan(&r.GroupID, &r.Topic, &r.LastUserMsg, &r.LastReply, &r.Stability, &vectorJSON, &r.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scan topic state: %w", err)
+		}
+		if err := json.Unmarshal([]byte(vectorJSON), &r.Vector); err != nil {
+			return nil, fmt.Errorf("decode topic vector: %w", err)
+		}
+		records = append(records, r)
+	}
+	return records, rows.Err()
+}
+
 func cosineSimilarity(a, b []float32) float64 {
 	if len(a) == 0 || len(a) != len(b) {
 		return 0
@@ -654,6 +764,70 @@ func sortMemoryByScore(records []MemoryRecord) {
 			records[j], records[j-1] = records[j-1], records[j]
 		}
 	}
+}
+
+// ListMemories 返回所有长期记忆，支持分页。
+func (s *Store) ListMemories(limit, offset int) ([]MemoryRecord, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	rows, err := s.db.Query(`
+		SELECT id, group_id, user_id, content, created_at
+		FROM memories ORDER BY id DESC LIMIT ? OFFSET ?
+	`, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("list memories: %w", err)
+	}
+	defer rows.Close()
+
+	var memories []MemoryRecord
+	for rows.Next() {
+		var m MemoryRecord
+		if err := rows.Scan(&m.ID, &m.GroupID, &m.UserID, &m.Content, &m.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan memory: %w", err)
+		}
+		memories = append(memories, m)
+	}
+	return memories, rows.Err()
+}
+
+// SearchMemoriesText 按关键词模糊搜索长期记忆。
+func (s *Store) SearchMemoriesText(query string, limit int) ([]MemoryRecord, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := s.db.Query(`
+		SELECT id, group_id, user_id, content, created_at
+		FROM memories WHERE content LIKE ? ORDER BY id DESC LIMIT ?
+	`, "%"+query+"%", limit)
+	if err != nil {
+		return nil, fmt.Errorf("search memories: %w", err)
+	}
+	defer rows.Close()
+
+	var memories []MemoryRecord
+	for rows.Next() {
+		var m MemoryRecord
+		if err := rows.Scan(&m.ID, &m.GroupID, &m.UserID, &m.Content, &m.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan memory: %w", err)
+		}
+		memories = append(memories, m)
+	}
+	return memories, rows.Err()
+}
+
+// DeleteMemory 删除一条长期记忆及其向量。
+func (s *Store) DeleteMemory(id int64) error {
+	if _, err := s.db.Exec(`DELETE FROM memory_embeddings WHERE memory_id = ?`, id); err != nil {
+		return fmt.Errorf("delete memory embedding: %w", err)
+	}
+	if _, err := s.db.Exec(`DELETE FROM memories WHERE id = ?`, id); err != nil {
+		return fmt.Errorf("delete memory: %w", err)
+	}
+	return nil
 }
 
 // GetMemories 返回某个群的长期记忆。

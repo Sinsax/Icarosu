@@ -29,6 +29,18 @@ func New(rate, burst float64) *Limiter {
 	}
 }
 
+// Update 热更新限流参数。
+func (l *Limiter) Update(rate, burst float64) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if rate > 0 {
+		l.rate = rate
+	}
+	if burst > 0 {
+		l.burst = burst
+	}
+}
+
 // Allow 判断 key 是否允许通过。
 func (l *Limiter) Allow(key string) bool {
 	l.mu.Lock()

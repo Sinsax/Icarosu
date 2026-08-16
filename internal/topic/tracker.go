@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"icarosu/internal/semantic"
+	"icarosu/internal/store"
 )
 
 // State 表示某个群当前的话题状态。
@@ -26,20 +27,65 @@ type Tracker struct {
 	embedder  semantic.Embedder
 	threshold float64
 	states    map[int64]*State
+	store     *store.Store
 }
 
-func NewTracker(embedder semantic.Embedder, threshold float64) *Tracker {
+// Option 用于配置 Tracker。
+type Option func(*Tracker)
+
+// WithStore 设置持久化存储，话题状态会保存到 SQLite。
+func WithStore(st *store.Store) Option {
+	return func(t *Tracker) {
+		t.store = st
+	}
+}
+
+func NewTracker(embedder semantic.Embedder, threshold float64, opts ...Option) *Tracker {
 	if embedder == nil {
 		embedder = semantic.NewLocalEmbedder(256)
 	}
 	if threshold <= 0 {
 		threshold = 0.55
 	}
-	return &Tracker{
+	t := &Tracker{
 		embedder:  embedder,
 		threshold: threshold,
 		states:    make(map[int64]*State),
 	}
+	for _, opt := range opts {
+		opt(t)
+	}
+	t.preload()
+	return t
+}
+
+func (t *Tracker) preload() {
+	if t.store == nil {
+		return
+	}
+	records, err := t.store.LoadTopicStates()
+	if err != nil {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for _, r := range records {
+		t.states[r.GroupID] = &State{
+			Topic:       r.Topic,
+			Vec:         r.Vector,
+			LastUserMsg: r.LastUserMsg,
+			LastReply:   r.LastReply,
+			Stability:   r.Stability,
+			UpdatedAt:   r.UpdatedAt,
+		}
+	}
+}
+
+func (t *Tracker) persist(groupID int64, st *State) {
+	if t.store == nil || st == nil {
+		return
+	}
+	_ = t.store.SaveTopicState(groupID, st.Topic, st.LastUserMsg, st.LastReply, st.Stability, st.Vec, st.UpdatedAt)
 }
 
 // Observe 观察一条用户消息，更新话题状态。
@@ -54,23 +100,24 @@ func (t *Tracker) Observe(ctx context.Context, groupID int64, message string) {
 	}
 
 	t.mu.Lock()
-	defer t.mu.Unlock()
-
 	st := t.states[groupID]
 	if st == nil || len(st.Vec) == 0 || cosineSimilarity(st.Vec, vec) < t.threshold {
-		t.states[groupID] = &State{
+		st = &State{
 			Topic:       message,
 			Vec:         vec,
 			LastUserMsg: message,
 			Stability:   1,
 			UpdatedAt:   time.Now(),
 		}
-		return
+		t.states[groupID] = st
+	} else {
+		st.Stability++
+		st.LastUserMsg = message
+		st.UpdatedAt = time.Now()
 	}
+	t.mu.Unlock()
 
-	st.Stability++
-	st.LastUserMsg = message
-	st.UpdatedAt = time.Now()
+	t.persist(groupID, st)
 }
 
 // RecordReply 记录机器人当前话题下的回复，用于后续一致性约束。
@@ -82,11 +129,15 @@ func (t *Tracker) RecordReply(ctx context.Context, groupID int64, reply string) 
 	_ = ctx
 
 	t.mu.Lock()
-	defer t.mu.Unlock()
-	if st := t.states[groupID]; st != nil {
-		st.LastReply = reply
-		st.UpdatedAt = time.Now()
+	var st *State
+	if cur := t.states[groupID]; cur != nil {
+		cur.LastReply = reply
+		cur.UpdatedAt = time.Now()
+		st = cur
 	}
+	t.mu.Unlock()
+
+	t.persist(groupID, st)
 }
 
 // Hint 返回话题一致性提示；如果当前不是稳定话题则返回空字符串。

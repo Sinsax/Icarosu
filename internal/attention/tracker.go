@@ -84,6 +84,19 @@ func (t *Tracker) OnBotReplied(key int64) {
 	t.checkTripLocked(key, now)
 }
 
+// Scores 返回所有已记录会话的当前注意力分数。
+func (t *Tracker) Scores() map[int64]float64 {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	out := make(map[int64]float64, len(t.score))
+	now := time.Now()
+	for key := range t.score {
+		t.applyDecayLocked(key, now)
+		out[key] = t.score[key]
+	}
+	return out
+}
+
 // Score 返回当前注意力分数（会先衰减）。
 func (t *Tracker) Score(key int64) float64 {
 	t.mu.Lock()

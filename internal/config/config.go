@@ -32,9 +32,12 @@ type Config struct {
 	LLMConfigFile string          `yaml:"llm_config_file"`
 	Bot           BotConfig       `yaml:"bot"`
 	QQ            QQConfig        `yaml:"qq"`
+	Telegram      TelegramConfig  `yaml:"telegram"`
 	LLM           LLMConfig       `yaml:"llm"`
 	Filter        FilterConfig    `yaml:"filter"`
 	Memory        MemoryConfig    `yaml:"memory"`
+	RateLimit     RateLimitConfig `yaml:"rate_limit"`
+	Queue         QueueConfig     `yaml:"queue"`
 	Store         StoreConfig     `yaml:"store"`
 	VLM           VLMConfig       `yaml:"vlm"`
 	Meme          MemeConfig      `yaml:"meme"`
@@ -77,6 +80,16 @@ type MemoryConfig struct {
 	SummaryIntervalMinutes int  `yaml:"summary_interval_minutes"`
 }
 
+type RateLimitConfig struct {
+	Rate  float64 `yaml:"rate"`
+	Burst float64 `yaml:"burst"`
+}
+
+type QueueConfig struct {
+	Workers int `yaml:"workers"`
+	Buffer  int `yaml:"buffer"`
+}
+
 type StoreConfig struct {
 	Driver string `yaml:"driver"`
 	DSN    string `yaml:"dsn"`
@@ -110,6 +123,12 @@ type AttentionConfig struct {
 type WebUIConfig struct {
 	Enabled bool   `yaml:"enabled"`
 	Addr    string `yaml:"addr"`
+	Token   string `yaml:"token"`
+}
+
+type TelegramConfig struct {
+	Enabled bool   `yaml:"enabled"`
+	Token   string `yaml:"token"`
 }
 
 type QQConfig struct {
@@ -140,17 +159,20 @@ type LogConfig struct {
 
 // 配置文件中各段的预设顺序，迁移/规范化时会按这个顺序重排。
 var (
-	topLevelOrder  = []string{"version", "llm_config_file", "bot", "filter", "memory", "store", "vlm", "meme", "attention", "webui", "qq", "llm", "log"}
+	topLevelOrder  = []string{"version", "llm_config_file", "bot", "filter", "memory", "rate_limit", "queue", "store", "vlm", "meme", "attention", "webui", "qq", "telegram", "llm", "log"}
 	botOrder       = []string{"self_id", "admin_ids", "name", "nicknames", "personality", "speaking_style", "background", "interests", "mention_reply", "keywords", "random_probability", "interest_reply", "cooldown_seconds", "group_rules", "forbidden", "system_prompt"}
 	filterOrder    = []string{"enabled", "mode", "group_ids", "user_ids"}
 	memoryOrder    = []string{"short_term_size", "long_term_enabled", "context_max_age_minutes", "summary_threshold", "summary_interval_minutes"}
+	rateLimitOrder = []string{"rate", "burst"}
+	queueOrder     = []string{"workers", "buffer"}
 	storeOrder     = []string{"driver", "dsn"}
 	vlmOrder       = []string{"provider", "base_url", "api_key", "model", "timeout_seconds", "prompt"}
 	memeOrder      = []string{"directory", "steal_probability"}
 	attentionOrder = []string{"enabled", "max_score", "decay_per_minute", "boost_at_bot", "boost_mention", "boost_interest", "boost_bot_replied", "trip_hold_seconds"}
-	webuiOrder     = []string{"enabled", "addr"}
+	webuiOrder     = []string{"enabled", "addr", "token"}
 	qqOrder        = []string{"onebot"}
 	onebotOrder    = []string{"ws_url", "access_token"}
+	telegramOrder  = []string{"enabled", "token"}
 	llmOrder       = []string{"provider", "base_url", "api_key", "model", "temperature", "max_tokens", "timeout_seconds", "cache_prefix", "cache_max_tokens", "log_cache"}
 	logOrder       = []string{"level"}
 )
@@ -192,6 +214,10 @@ func Default() *Config {
 				AccessToken: "",
 			},
 		},
+		Telegram: TelegramConfig{
+			Enabled: false,
+			Token:   "",
+		},
 		LLM: LLMConfig{
 			Provider:       "deepseek",
 			BaseURL:        "https://api.deepseek.com/v1",
@@ -216,6 +242,14 @@ func Default() *Config {
 			ContextMaxAgeMinutes:   30,
 			SummaryThreshold:       50,
 			SummaryIntervalMinutes: 60,
+		},
+		RateLimit: RateLimitConfig{
+			Rate:  5,
+			Burst: 10,
+		},
+		Queue: QueueConfig{
+			Workers: 4,
+			Buffer:  128,
 		},
 		Store: StoreConfig{
 			Driver: "sqlite",
@@ -246,6 +280,7 @@ func Default() *Config {
 		WebUI: WebUIConfig{
 			Enabled: false,
 			Addr:    "127.0.0.1:8080",
+			Token:   "",
 		},
 		Log: LogConfig{
 			Level: "info",
@@ -570,6 +605,22 @@ func applyDefaults(cfg *Config, root *yaml.Node) {
 		cfg.Memory.SummaryIntervalMinutes = def.Memory.SummaryIntervalMinutes
 	}
 
+	rateLimitNode := findMappingValue(root, "rate_limit")
+	if cfg.RateLimit.Rate == 0 && (rateLimitNode == nil || findMappingValue(rateLimitNode, "rate") == nil) {
+		cfg.RateLimit.Rate = def.RateLimit.Rate
+	}
+	if cfg.RateLimit.Burst == 0 && (rateLimitNode == nil || findMappingValue(rateLimitNode, "burst") == nil) {
+		cfg.RateLimit.Burst = def.RateLimit.Burst
+	}
+
+	queueNode := findMappingValue(root, "queue")
+	if cfg.Queue.Workers == 0 && (queueNode == nil || findMappingValue(queueNode, "workers") == nil) {
+		cfg.Queue.Workers = def.Queue.Workers
+	}
+	if cfg.Queue.Buffer == 0 && (queueNode == nil || findMappingValue(queueNode, "buffer") == nil) {
+		cfg.Queue.Buffer = def.Queue.Buffer
+	}
+
 	storeNode := findMappingValue(root, "store")
 	if cfg.Store.Driver == "" && (storeNode == nil || findMappingValue(storeNode, "driver") == nil) {
 		cfg.Store.Driver = def.Store.Driver
@@ -636,11 +687,22 @@ func applyDefaults(cfg *Config, root *yaml.Node) {
 	if cfg.WebUI.Addr == "" && (webuiNode == nil || findMappingValue(webuiNode, "addr") == nil) {
 		cfg.WebUI.Addr = def.WebUI.Addr
 	}
+	if cfg.WebUI.Token == "" && (webuiNode == nil || findMappingValue(webuiNode, "token") == nil) {
+		cfg.WebUI.Token = def.WebUI.Token
+	}
 
 	qqNode := findMappingValue(root, "qq")
 	onebotNode := findMappingValue(qqNode, "onebot")
 	if findMappingValue(onebotNode, "ws_url") == nil && cfg.QQ.OneBot.WSURL == "" {
 		cfg.QQ.OneBot.WSURL = def.QQ.OneBot.WSURL
+	}
+
+	telegramNode := findMappingValue(root, "telegram")
+	if !cfg.Telegram.Enabled && (telegramNode == nil || findMappingValue(telegramNode, "enabled") == nil) {
+		cfg.Telegram.Enabled = def.Telegram.Enabled
+	}
+	if cfg.Telegram.Token == "" && (telegramNode == nil || findMappingValue(telegramNode, "token") == nil) {
+		cfg.Telegram.Token = def.Telegram.Token
 	}
 
 	llmNode := findMappingValue(root, "llm")
@@ -986,6 +1048,12 @@ func canonicalize(root *yaml.Node) {
 	if memoryNode := findMappingValue(root, "memory"); memoryNode != nil {
 		reorderMapping(memoryNode, memoryOrder)
 	}
+	if rateLimitNode := findMappingValue(root, "rate_limit"); rateLimitNode != nil {
+		reorderMapping(rateLimitNode, rateLimitOrder)
+	}
+	if queueNode := findMappingValue(root, "queue"); queueNode != nil {
+		reorderMapping(queueNode, queueOrder)
+	}
 	if storeNode := findMappingValue(root, "store"); storeNode != nil {
 		reorderMapping(storeNode, storeOrder)
 	}
@@ -1007,6 +1075,9 @@ func canonicalize(root *yaml.Node) {
 			reorderMapping(onebotNode, onebotOrder)
 		}
 	}
+	if telegramNode := findMappingValue(root, "telegram"); telegramNode != nil {
+		reorderMapping(telegramNode, telegramOrder)
+	}
 	if llmNode := findMappingValue(root, "llm"); llmNode != nil {
 		reorderMapping(llmNode, llmOrder)
 	}
@@ -1021,6 +1092,8 @@ func isCanonical(root *yaml.Node) bool {
 		mappingHasOrder(findMappingValue(root, "bot"), botOrder) &&
 		mappingHasOrder(findMappingValue(root, "filter"), filterOrder) &&
 		mappingHasOrder(findMappingValue(root, "memory"), memoryOrder) &&
+		mappingHasOrder(findMappingValue(root, "rate_limit"), rateLimitOrder) &&
+		mappingHasOrder(findMappingValue(root, "queue"), queueOrder) &&
 		mappingHasOrder(findMappingValue(root, "store"), storeOrder) &&
 		mappingHasOrder(findMappingValue(root, "vlm"), vlmOrder) &&
 		mappingHasOrder(findMappingValue(root, "meme"), memeOrder) &&
@@ -1028,6 +1101,7 @@ func isCanonical(root *yaml.Node) bool {
 		mappingHasOrder(findMappingValue(root, "webui"), webuiOrder) &&
 		mappingHasOrder(findMappingValue(root, "qq"), qqOrder) &&
 		mappingHasOrder(findMappingValue(findMappingValue(root, "qq"), "onebot"), onebotOrder) &&
+		mappingHasOrder(findMappingValue(root, "telegram"), telegramOrder) &&
 		mappingHasOrder(findMappingValue(root, "llm"), llmOrder) &&
 		mappingHasOrder(findMappingValue(root, "log"), logOrder)
 }

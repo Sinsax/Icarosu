@@ -78,6 +78,16 @@ memory:
   # 距离上次总结多少分钟后自动总结
   summary_interval_minutes: 60
 
+# 消息限流：按群/会话的令牌桶
+rate_limit:
+  rate: 5
+  burst: 10
+
+# 事件处理队列
+queue:
+  workers: 4
+  buffer: 128
+
 # 长期存储配置
 store:
   driver: "sqlite"
@@ -110,6 +120,8 @@ attention:
 webui:
   enabled: true
   addr: "127.0.0.1:8080"
+  # 访问令牌；留空表示不鉴权。建议设置一个随机字符串。
+  token: ""
 
 qq:
   onebot:
@@ -117,6 +129,11 @@ qq:
     ws_url: "ws://127.0.0.1:6700"
     # 如果 OneBot 配置了 access_token，请填写
     access_token: ""
+
+# Telegram 适配器（可选，启用后替代 QQ OneBot 接入）
+telegram:
+  enabled: false
+  token: ""
 
 log:
   level: "info" # debug | info | warn | error

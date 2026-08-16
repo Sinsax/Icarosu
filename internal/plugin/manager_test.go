@@ -158,6 +158,34 @@ func TestManagerDispatchRunsStagesInOrder(t *testing.T) {
 	}
 }
 
+func TestManagerSetEnabledSkipsDisabled(t *testing.T) {
+	m := plugin.NewManager()
+	var order []string
+	m.Register(&testPlugin{
+		name:     "high",
+		priority: 10,
+		handle: func(e *plugin.Event) bool {
+			order = append(order, "high")
+			return true
+		},
+	})
+	m.Register(&testPlugin{
+		name:     "low",
+		priority: 0,
+		handle: func(e *plugin.Event) bool {
+			order = append(order, "low")
+			return true
+		},
+	})
+
+	m.SetEnabled("high", false)
+	m.Dispatch(context.Background(), &mockBot{}, &plugin.Event{Type: plugin.EventGroupMessage})
+
+	if len(order) != 1 || order[0] != "low" {
+		t.Fatalf("expected only low to run, got %v", order)
+	}
+}
+
 func TestManagerDispatchPreprocessorCanStopPipeline(t *testing.T) {
 	m := plugin.NewManager()
 	var order []string

@@ -157,9 +157,14 @@ func (m *Memory) Recent(e *plugin.Event, limit int) []Entry {
 
 // Clear 清空某个群/私聊的短期上下文。
 func (m *Memory) Clear(e *plugin.Event) {
+	m.ClearKey(chatKey(e))
+}
+
+// ClearKey 按会话 key 清空短期上下文。
+func (m *Memory) ClearKey(key int64) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	delete(m.short, chatKey(e))
+	delete(m.short, key)
 }
 
 // LongTermMemories 返回某个群的长期记忆文本。
