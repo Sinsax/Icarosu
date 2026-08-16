@@ -17,6 +17,7 @@ import (
 	"icarosu/internal/meme"
 	"icarosu/internal/memory"
 	"icarosu/internal/persona"
+	"icarosu/internal/platform"
 	"icarosu/internal/plugin"
 	"icarosu/internal/plugin/admin"
 	_ "icarosu/internal/plugin/builtin"
@@ -30,6 +31,7 @@ import (
 	"icarosu/internal/plugin/trigger"
 	"icarosu/internal/qq"
 	"icarosu/internal/ratelimit"
+	"icarosu/internal/session"
 	"icarosu/internal/store"
 	"icarosu/internal/style"
 	"icarosu/internal/tools"
@@ -118,7 +120,7 @@ func main() {
 
 	personaPrompt := persona.BuildSystemPrompt(cfg.Bot)
 
-	client := qq.NewClient(cfg.QQ.OneBot.WSURL, cfg.QQ.OneBot.AccessToken, log)
+	var client platform.Adapter = qq.NewClient(cfg.QQ.OneBot.WSURL, cfg.QQ.OneBot.AccessToken, log)
 
 	// 插件管理器：后续所有扩展（AI 聊天、管理、娱乐等）都以插件形式注册到这里。
 	// 简单插件可通过 init() 自注册到全局注册表；需要依赖的插件在 main 中显式构造注册。
@@ -136,7 +138,7 @@ func main() {
 	}
 	manager.Register(recorder.New(mem, recorderOpts...))
 	if st != nil {
-		manager.Register(membersync.New(client, st, membersync.WithLogger(log)))
+		manager.Register(membersync.New(client.(*qq.Client), st, membersync.WithLogger(log)))
 	}
 	if memeStore != nil && visionSvc != nil {
 		manager.Register(steal.New(cfg.Meme, visionSvc, personaPrompt, steal.WithLogger(log)))
@@ -172,7 +174,9 @@ func main() {
 	manager.Register(chat.New(llmClient, personaPrompt, chatOpts...))
 
 	limiter := ratelimit.New(5, 10)
-	h := handler.New(client, manager, cfg.Bot.SelfID, log, handler.WithRateLimiter(limiter))
+	sessionMgr := session.New(24 * time.Hour)
+	go sessionMgr.CleanupLoop(ctx, time.Hour)
+	h := handler.New(client, manager, cfg.Bot.SelfID, log, handler.WithRateLimiter(limiter), handler.WithSessionManager(sessionMgr))
 
 	client.SetMessageHandler(func(ctx context.Context, evt qq.Event) {
 		h.Handle(ctx, evt)

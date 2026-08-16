@@ -5,11 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"sync"
 
 	"icarosu/internal/plugin"
 	"icarosu/internal/qq"
 	"icarosu/internal/ratelimit"
+	"icarosu/internal/session"
 )
 
 // Handler 负责把 OneBot 原始事件转换为插件系统的事件，并交给 Manager 分发。
@@ -19,9 +19,8 @@ type Handler struct {
 	selfID  int64
 	logger  *slog.Logger
 
-	mu      sync.Mutex
-	locks   map[int64]*sync.Mutex
-	limiter *ratelimit.Limiter
+	sessions *session.Manager
+	limiter  *ratelimit.Limiter
 }
 
 // WithRateLimiter 设置全局/按群限流器。
@@ -31,13 +30,20 @@ func WithRateLimiter(l *ratelimit.Limiter) func(*Handler) {
 	}
 }
 
+// WithSessionManager 设置会话管理器。
+func WithSessionManager(sm *session.Manager) func(*Handler) {
+	return func(h *Handler) {
+		h.sessions = sm
+	}
+}
+
 func New(bot plugin.Bot, manager *plugin.Manager, selfID int64, logger *slog.Logger, opts ...func(*Handler)) *Handler {
 	h := &Handler{
-		bot:     bot,
-		manager: manager,
-		selfID:  selfID,
-		logger:  logger,
-		locks:   make(map[int64]*sync.Mutex),
+		bot:      bot,
+		manager:  manager,
+		selfID:   selfID,
+		logger:   logger,
+		sessions: session.New(0),
 	}
 	for _, opt := range opts {
 		opt(h)
@@ -45,16 +51,9 @@ func New(bot plugin.Bot, manager *plugin.Manager, selfID int64, logger *slog.Log
 	return h
 }
 
-// lockFor 返回某个群/私聊的串行锁，保证同一个会话内的消息按顺序处理。
-func (h *Handler) lockFor(key int64) *sync.Mutex {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	lock, ok := h.locks[key]
-	if !ok {
-		lock = &sync.Mutex{}
-		h.locks[key] = lock
-	}
-	return lock
+// lockFor 返回某个会话的串行锁，保证同一个会话内的消息按顺序处理。
+func (h *Handler) lockFor(key int64) *session.Session {
+	return h.sessions.Get(key)
 }
 
 // Handle 处理一个 OneBot 事件。
