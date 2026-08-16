@@ -11,6 +11,7 @@ import (
 
 	"icarosu/internal/attention"
 	"icarosu/internal/config"
+	"icarosu/internal/dryrun"
 	"icarosu/internal/handler"
 	"icarosu/internal/llm"
 	"icarosu/internal/logger"
@@ -145,6 +146,12 @@ func main() {
 		client = qqClient
 	}
 
+	botForPlugins := plugin.Bot(client)
+	if cfg.DryRun {
+		botForPlugins = dryrun.New(client, log)
+		log.Warn("dry run mode enabled: outgoing messages will be logged but not sent")
+	}
+
 	// 插件管理器：后续所有扩展（AI 聊天、管理、娱乐等）都以插件形式注册到这里。
 	// 简单插件可通过 init() 自注册到全局注册表；需要依赖的插件在 main 中显式构造注册。
 	manager := plugin.NewManager()
@@ -233,11 +240,11 @@ func main() {
 
 	sessionMgr := session.New(24 * time.Hour)
 	go sessionMgr.CleanupLoop(ctx, time.Hour)
-	h := handler.New(client, manager, cfg.Bot.SelfID, log, handler.WithRateLimiter(limiter), handler.WithSessionManager(sessionMgr))
+	h := handler.New(botForPlugins, manager, cfg.Bot.SelfID, log, handler.WithRateLimiter(limiter), handler.WithSessionManager(sessionMgr))
 
 	eventPool := queue.NewPool(cfg.Queue.Workers, cfg.Queue.Buffer)
 	if cfg.WebUI.Enabled {
-		webuiOpts := []webui.Option{webui.WithLogBuffer(logBuf), webui.WithAttention(attentionTracker), webui.WithLLM(llmClient), webui.WithPluginManager(manager), webui.WithMemory(mem), webui.WithBot(client)}
+		webuiOpts := []webui.Option{webui.WithLogBuffer(logBuf), webui.WithAttention(attentionTracker), webui.WithLLM(llmClient), webui.WithPluginManager(manager), webui.WithMemory(mem), webui.WithBot(botForPlugins)}
 		if st != nil {
 			webuiOpts = append(webuiOpts, webui.WithStore(st))
 		}
@@ -261,7 +268,7 @@ func main() {
 		})
 	})
 
-	if err := manager.Start(ctx, client); err != nil {
+	if err := manager.Start(ctx, botForPlugins); err != nil {
 		log.Error("failed to start plugins", "error", err)
 		os.Exit(1)
 	}

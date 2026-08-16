@@ -30,6 +30,7 @@ const CurrentVersion = 12
 type Config struct {
 	Version       int             `yaml:"version"`
 	LLMConfigFile string          `yaml:"llm_config_file"`
+	DryRun        bool            `yaml:"dry_run"`
 	Bot           BotConfig       `yaml:"bot"`
 	QQ            QQConfig        `yaml:"qq"`
 	Telegram      TelegramConfig  `yaml:"telegram"`
@@ -159,7 +160,7 @@ type LogConfig struct {
 
 // 配置文件中各段的预设顺序，迁移/规范化时会按这个顺序重排。
 var (
-	topLevelOrder  = []string{"version", "llm_config_file", "bot", "filter", "memory", "rate_limit", "queue", "store", "vlm", "meme", "attention", "webui", "qq", "telegram", "llm", "log"}
+	topLevelOrder  = []string{"version", "llm_config_file", "dry_run", "bot", "filter", "memory", "rate_limit", "queue", "store", "vlm", "meme", "attention", "webui", "qq", "telegram", "llm", "log"}
 	botOrder       = []string{"self_id", "admin_ids", "name", "nicknames", "personality", "speaking_style", "background", "interests", "mention_reply", "keywords", "random_probability", "interest_reply", "cooldown_seconds", "group_rules", "forbidden", "system_prompt"}
 	filterOrder    = []string{"enabled", "mode", "group_ids", "user_ids"}
 	memoryOrder    = []string{"short_term_size", "long_term_enabled", "context_max_age_minutes", "summary_threshold", "summary_interval_minutes"}
@@ -181,6 +182,7 @@ func Default() *Config {
 	return &Config{
 		Version:       CurrentVersion,
 		LLMConfigFile: "llm.yaml",
+		DryRun:        false,
 		Bot: BotConfig{
 			SelfID:            0,
 			AdminIDs:          []int64{},
@@ -522,6 +524,9 @@ func applyDefaults(cfg *Config, root *yaml.Node) {
 	}
 	if cfg.LLMConfigFile == "" && findMappingValue(root, "llm_config_file") == nil {
 		cfg.LLMConfigFile = def.LLMConfigFile
+	}
+	if !cfg.DryRun && findMappingValue(root, "dry_run") == nil {
+		cfg.DryRun = def.DryRun
 	}
 
 	botNode := findMappingValue(root, "bot")

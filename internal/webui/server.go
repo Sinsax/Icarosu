@@ -360,6 +360,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	status := map[string]any{
 		"running":      true,
+		"dry_run":      s.manager.Get().DryRun,
 		"webui_addr":   s.manager.Get().WebUI.Addr,
 		"auth_enabled": s.manager.Get().WebUI.Token != "",
 	}
@@ -1151,7 +1152,8 @@ async function loadStatus() {
     ['LLM 请求', data.llm ? data.llm.requests : '-', ''],
     ['LLM Tokens', data.llm ? data.llm.tokens : '-', ''],
     ['LLM 错误', data.llm ? data.llm.errors : '-', ''],
-    ['鉴权', data.auth_enabled ? '已开启' : '未开启', '']
+    ['鉴权', data.auth_enabled ? '已开启' : '未开启', ''],
+    ['测试模式', data.dry_run ? '开启' : '关闭', data.dry_run ? '不会真正发送' : '']
   ];
   document.getElementById('statusCards').innerHTML = cards.map(c =>
     '<div class="stat-card"><div class="label">' + esc(c[0]) + '</div><div class="value">' + esc(c[1]) + '</div>' +
