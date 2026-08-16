@@ -1,0 +1,16 @@
+# 本地配置
+configs/config.yaml
+configs/config.yaml.bak
+configs/llm.local.yaml
+
+# 数据
+data/
+
+# Go
+.go/
+*.test
+*.out
+
+# IDE
+.idea/
+.vscode/
