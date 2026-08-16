@@ -138,7 +138,7 @@ func (c *Client) ChatWithTools(ctx context.Context, messages []Message, tools []
 
 	const maxToolRounds = 5
 	for round := 0; round < maxToolRounds; round++ {
-		resp, err := c.Complete(ctx, msgs, tools)
+		resp, err := c.completeWithRetry(ctx, msgs, tools)
 		if err != nil {
 			return "", err
 		}
@@ -185,6 +185,42 @@ func (c *Client) ChatWithTools(ctx context.Context, messages []Message, tools []
 	}
 
 	return "", fmt.Errorf("llm tool calling exceeded max rounds")
+}
+
+// completeWithRetry 调用 Complete，并对可重试错误做简单退避重试。
+func (c *Client) completeWithRetry(ctx context.Context, messages []Message, tools []Tool) (*Response, error) {
+	const maxRetries = 2
+	var lastErr error
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		resp, err := c.Complete(ctx, messages, tools)
+		if err == nil {
+			return resp, nil
+		}
+		lastErr = err
+		if !shouldRetryLLM(err) || attempt == maxRetries {
+			break
+		}
+		wait := time.Duration(attempt+1) * 500 * time.Millisecond
+		c.logger.Warn("llm request failed, retrying", "attempt", attempt+1, "error", err, "wait", wait.String())
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(wait):
+		}
+	}
+	return nil, lastErr
+}
+
+func shouldRetryLLM(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := err.Error()
+	// 鉴权/参数类错误不重试
+	if strings.Contains(s, "401") || strings.Contains(s, "403") || strings.Contains(s, "400") {
+		return false
+	}
+	return true
 }
 
 // Complete 发送一次请求，返回包含思考过程、文本和工具调用的完整响应。

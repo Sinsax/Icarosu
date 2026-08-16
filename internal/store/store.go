@@ -109,7 +109,31 @@ func Open(cfg config.StoreConfig) (*Store, error) {
 }
 
 func (s *Store) migrate() error {
-	stmts := []string{
+	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)`); err != nil {
+		return fmt.Errorf("create schema_version: %w", err)
+	}
+
+	var version int
+	if err := s.db.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_version`).Scan(&version); err != nil {
+		return fmt.Errorf("read schema version: %w", err)
+	}
+
+	if version < 1 {
+		for _, stmt := range allSchemaStatements() {
+			if _, err := s.db.Exec(stmt); err != nil {
+				return fmt.Errorf("migrate store to v1: %w", err)
+			}
+		}
+		if _, err := s.db.Exec(`INSERT INTO schema_version (version) VALUES (1)`); err != nil {
+			return fmt.Errorf("write schema version: %w", err)
+		}
+	}
+
+	return nil
+}
+
+func allSchemaStatements() []string {
+	return []string{
 		`CREATE TABLE IF NOT EXISTS members (
 			group_id INTEGER NOT NULL,
 			user_id INTEGER NOT NULL,
@@ -184,12 +208,6 @@ func (s *Store) migrate() error {
 			PRIMARY KEY (group_id, from_user_id, to_user_id)
 		)`,
 	}
-	for _, stmt := range stmts {
-		if _, err := s.db.Exec(stmt); err != nil {
-			return fmt.Errorf("migrate store: %w", err)
-		}
-	}
-	return nil
 }
 
 func (s *Store) Close() error {

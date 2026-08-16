@@ -9,6 +9,7 @@ import (
 
 	"icarosu/internal/plugin"
 	"icarosu/internal/qq"
+	"icarosu/internal/ratelimit"
 )
 
 // Handler 负责把 OneBot 原始事件转换为插件系统的事件，并交给 Manager 分发。
@@ -18,18 +19,30 @@ type Handler struct {
 	selfID  int64
 	logger  *slog.Logger
 
-	mu    sync.Mutex
-	locks map[int64]*sync.Mutex
+	mu      sync.Mutex
+	locks   map[int64]*sync.Mutex
+	limiter *ratelimit.Limiter
 }
 
-func New(bot plugin.Bot, manager *plugin.Manager, selfID int64, logger *slog.Logger) *Handler {
-	return &Handler{
+// WithRateLimiter 设置全局/按群限流器。
+func WithRateLimiter(l *ratelimit.Limiter) func(*Handler) {
+	return func(h *Handler) {
+		h.limiter = l
+	}
+}
+
+func New(bot plugin.Bot, manager *plugin.Manager, selfID int64, logger *slog.Logger, opts ...func(*Handler)) *Handler {
+	h := &Handler{
 		bot:     bot,
 		manager: manager,
 		selfID:  selfID,
 		logger:  logger,
 		locks:   make(map[int64]*sync.Mutex),
 	}
+	for _, opt := range opts {
+		opt(h)
+	}
+	return h
 }
 
 // lockFor 返回某个群/私聊的串行锁，保证同一个会话内的消息按顺序处理。
@@ -73,6 +86,10 @@ func (h *Handler) handleMessage(ctx context.Context, evt qq.Event) {
 			ReplyToMessageID: extractReplyMessageID(evt),
 			ReplyToUserID:    extractReplyUserID(evt),
 			Raw:              mustRaw(evt),
+		}
+		if h.limiter != nil && !h.limiter.Allow(fmt.Sprintf("group:%d", evt.GroupID)) {
+			h.logger.Debug("message rate limited", "group_id", evt.GroupID)
+			return
 		}
 		lock := h.lockFor(evt.GroupID)
 		lock.Lock()

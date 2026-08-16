@@ -29,6 +29,7 @@ import (
 	"icarosu/internal/plugin/summarizer"
 	"icarosu/internal/plugin/trigger"
 	"icarosu/internal/qq"
+	"icarosu/internal/ratelimit"
 	"icarosu/internal/store"
 	"icarosu/internal/style"
 	"icarosu/internal/tools"
@@ -170,7 +171,8 @@ func main() {
 	}
 	manager.Register(chat.New(llmClient, personaPrompt, chatOpts...))
 
-	h := handler.New(client, manager, cfg.Bot.SelfID, log)
+	limiter := ratelimit.New(5, 10)
+	h := handler.New(client, manager, cfg.Bot.SelfID, log, handler.WithRateLimiter(limiter))
 
 	client.SetMessageHandler(func(ctx context.Context, evt qq.Event) {
 		h.Handle(ctx, evt)
