@@ -33,7 +33,6 @@ type Config struct {
 	DryRun        bool            `yaml:"dry_run"`
 	Bot           BotConfig       `yaml:"bot"`
 	QQ            QQConfig        `yaml:"qq"`
-	Telegram      TelegramConfig  `yaml:"telegram"`
 	LLM           LLMConfig       `yaml:"llm"`
 	Filter        FilterConfig    `yaml:"filter"`
 	Memory        MemoryConfig    `yaml:"memory"`
@@ -127,11 +126,6 @@ type WebUIConfig struct {
 	Token   string `yaml:"token"`
 }
 
-type TelegramConfig struct {
-	Enabled bool   `yaml:"enabled"`
-	Token   string `yaml:"token"`
-}
-
 type QQConfig struct {
 	OneBot OneBotConfig `yaml:"onebot"`
 }
@@ -160,7 +154,7 @@ type LogConfig struct {
 
 // 配置文件中各段的预设顺序，迁移/规范化时会按这个顺序重排。
 var (
-	topLevelOrder  = []string{"version", "llm_config_file", "dry_run", "bot", "filter", "memory", "rate_limit", "queue", "store", "vlm", "meme", "attention", "webui", "qq", "telegram", "llm", "log"}
+	topLevelOrder  = []string{"version", "llm_config_file", "dry_run", "bot", "filter", "memory", "rate_limit", "queue", "store", "vlm", "meme", "attention", "webui", "qq", "llm", "log"}
 	botOrder       = []string{"self_id", "admin_ids", "name", "nicknames", "personality", "speaking_style", "background", "interests", "mention_reply", "keywords", "random_probability", "interest_reply", "cooldown_seconds", "group_rules", "forbidden", "system_prompt"}
 	filterOrder    = []string{"enabled", "mode", "group_ids", "user_ids"}
 	memoryOrder    = []string{"short_term_size", "long_term_enabled", "context_max_age_minutes", "summary_threshold", "summary_interval_minutes"}
@@ -173,7 +167,6 @@ var (
 	webuiOrder     = []string{"enabled", "addr", "token"}
 	qqOrder        = []string{"onebot"}
 	onebotOrder    = []string{"ws_url", "access_token"}
-	telegramOrder  = []string{"enabled", "token"}
 	llmOrder       = []string{"provider", "base_url", "api_key", "model", "temperature", "max_tokens", "timeout_seconds", "cache_prefix", "cache_max_tokens", "log_cache"}
 	logOrder       = []string{"level"}
 )
@@ -215,10 +208,6 @@ func Default() *Config {
 				WSURL:       "ws://127.0.0.1:6700",
 				AccessToken: "",
 			},
-		},
-		Telegram: TelegramConfig{
-			Enabled: false,
-			Token:   "",
 		},
 		LLM: LLMConfig{
 			Provider:       "deepseek",
@@ -702,14 +691,6 @@ func applyDefaults(cfg *Config, root *yaml.Node) {
 		cfg.QQ.OneBot.WSURL = def.QQ.OneBot.WSURL
 	}
 
-	telegramNode := findMappingValue(root, "telegram")
-	if !cfg.Telegram.Enabled && (telegramNode == nil || findMappingValue(telegramNode, "enabled") == nil) {
-		cfg.Telegram.Enabled = def.Telegram.Enabled
-	}
-	if cfg.Telegram.Token == "" && (telegramNode == nil || findMappingValue(telegramNode, "token") == nil) {
-		cfg.Telegram.Token = def.Telegram.Token
-	}
-
 	llmNode := findMappingValue(root, "llm")
 	if cfg.LLM.Provider == "" && (llmNode == nil || findMappingValue(llmNode, "provider") == nil) {
 		cfg.LLM.Provider = def.LLM.Provider
@@ -1080,9 +1061,6 @@ func canonicalize(root *yaml.Node) {
 			reorderMapping(onebotNode, onebotOrder)
 		}
 	}
-	if telegramNode := findMappingValue(root, "telegram"); telegramNode != nil {
-		reorderMapping(telegramNode, telegramOrder)
-	}
 	if llmNode := findMappingValue(root, "llm"); llmNode != nil {
 		reorderMapping(llmNode, llmOrder)
 	}
@@ -1106,7 +1084,6 @@ func isCanonical(root *yaml.Node) bool {
 		mappingHasOrder(findMappingValue(root, "webui"), webuiOrder) &&
 		mappingHasOrder(findMappingValue(root, "qq"), qqOrder) &&
 		mappingHasOrder(findMappingValue(findMappingValue(root, "qq"), "onebot"), onebotOrder) &&
-		mappingHasOrder(findMappingValue(root, "telegram"), telegramOrder) &&
 		mappingHasOrder(findMappingValue(root, "llm"), llmOrder) &&
 		mappingHasOrder(findMappingValue(root, "log"), logOrder)
 }

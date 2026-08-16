@@ -133,10 +133,5 @@ qq:
     # 如果 OneBot 配置了 access_token，请填写
     access_token: ""
 
-# Telegram 适配器（可选，启用后替代 QQ OneBot 接入）
-telegram:
-  enabled: false
-  token: ""
-
 log:
   level: "info" # debug | info | warn | error

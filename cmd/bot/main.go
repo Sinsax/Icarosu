@@ -19,7 +19,6 @@ import (
 	"icarosu/internal/memory"
 	"icarosu/internal/persona"
 	"icarosu/internal/platform"
-	"icarosu/internal/platform/telegram"
 	"icarosu/internal/plugin"
 	"icarosu/internal/plugin/admin"
 	_ "icarosu/internal/plugin/builtin"
@@ -137,14 +136,8 @@ func main() {
 
 	personaPrompt := persona.BuildSystemPrompt(cfg.Bot)
 
-	var client platform.Adapter
-	var qqClient *qq.Client
-	if cfg.Telegram.Enabled {
-		client = telegram.NewClient(cfg.Telegram.Token, log)
-	} else {
-		qqClient = qq.NewClient(cfg.QQ.OneBot.WSURL, cfg.QQ.OneBot.AccessToken, log)
-		client = qqClient
-	}
+	var client platform.Adapter = qq.NewClient(cfg.QQ.OneBot.WSURL, cfg.QQ.OneBot.AccessToken, log)
+	qqClient := client.(*qq.Client)
 
 	botForPlugins := plugin.Bot(client)
 	if cfg.DryRun {
@@ -279,13 +272,9 @@ func main() {
 	}()
 	defer eventPool.Close()
 
-	if cfg.Telegram.Enabled {
-		log.Info("connecting to Telegram")
-	} else {
-		log.Info("connecting to OneBot", "url", cfg.QQ.OneBot.WSURL)
-	}
+	log.Info("connecting to OneBot", "url", cfg.QQ.OneBot.WSURL)
 	if err := client.Connect(ctx); err != nil {
-		log.Error("failed to connect platform", "error", err)
+		log.Error("failed to connect OneBot", "error", err)
 		os.Exit(1)
 	}
 

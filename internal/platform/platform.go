@@ -14,7 +14,7 @@ type Event = qq.Event
 type MessageHandler = qq.MessageHandler
 
 // Adapter 是平台接入层抽象。
-// 目前由 OneBot 实现，后续可扩展 Discord/Telegram 等。
+// 目前由 OneBot 实现，后续可按需扩展其他平台。
 type Adapter interface {
 	plugin.Bot
 	SetMessageHandler(handler MessageHandler)
