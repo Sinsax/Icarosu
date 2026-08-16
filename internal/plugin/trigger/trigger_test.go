@@ -88,6 +88,26 @@ func TestTriggerCooldownBlocksNonMention(t *testing.T) {
 	}
 }
 
+func TestTriggerInterestMatchesImageContext(t *testing.T) {
+	p := trigger.New(config.BotConfig{
+		MentionReply:      true,
+		InterestReply:     true,
+		Interests:         []string{"猫"},
+		RandomProbability: 0,
+		CooldownSeconds:   60,
+	})
+
+	handled := p.Handle(context.Background(), nil, &plugin.Event{
+		Type:         plugin.EventGroupMessage,
+		GroupID:      1,
+		RawMessage:   "",
+		ImageContext: "一只猫在睡觉",
+	})
+	if handled {
+		t.Fatal("image context matching interest should not be blocked")
+	}
+}
+
 func TestTriggerPrivateAlwaysPasses(t *testing.T) {
 	p := trigger.New(config.BotConfig{
 		RandomProbability: 0,

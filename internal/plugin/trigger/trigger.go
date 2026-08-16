@@ -100,14 +100,18 @@ func (p *TriggerPlugin) Handle(_ context.Context, _ plugin.Bot, e *plugin.Event)
 	}
 
 	msg := strings.ToLower(e.RawMessage)
+	matchText := msg
+	if e.ImageContext != "" {
+		matchText += " " + strings.ToLower(e.ImageContext)
+	}
 
 	// 注意力系统：先根据当前消息更新注意力
 	if p.attention != nil {
 		p.attention.Observe(
 			e.GroupID,
 			e.AtBot,
-			p.mentioned(msg),
-			p.matchAny(msg, p.cfg.Interests),
+			p.mentioned(matchText),
+			p.matchAny(matchText, p.cfg.Interests),
 		)
 	}
 
@@ -128,11 +132,11 @@ func (p *TriggerPlugin) Handle(_ context.Context, _ plugin.Bot, e *plugin.Event)
 		return true
 	}
 
-	if p.matchAny(msg, p.cfg.Keywords) {
+	if p.matchAny(matchText, p.cfg.Keywords) {
 		p.markReplied(e.GroupID)
 		return false
 	}
-	if p.cfg.InterestReply && p.matchAny(msg, p.cfg.Interests) {
+	if p.cfg.InterestReply && p.matchAny(matchText, p.cfg.Interests) {
 		p.markReplied(e.GroupID)
 		if p.logger != nil {
 			p.logger.Info("trigger by interest", "group_id", e.GroupID, "message", e.RawMessage)

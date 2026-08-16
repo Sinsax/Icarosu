@@ -66,6 +66,7 @@ type Event struct {
 	ReplyToMessageID int64
 	ReplyToUserID    int64
 	OperatorID       int64
+	ImageContext     string
 	Raw              []byte
 }
 

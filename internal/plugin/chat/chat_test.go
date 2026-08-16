@@ -121,6 +121,39 @@ func TestChatHandlesPrivateMessage(t *testing.T) {
 	}
 }
 
+func TestChatIncludesImageContext(t *testing.T) {
+	var got string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		got = string(body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"嗯"}}]}`))
+	}))
+	t.Cleanup(server.Close)
+
+	client := llm.NewClient(llm.Config{
+		BaseURL: server.URL,
+		Model:   "test-model",
+		Timeout: 5 * time.Second,
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	p := chat.New(client, "你是群友")
+	bot := &mockBot{}
+	if !p.Handle(context.Background(), bot, &plugin.Event{
+		Type:         plugin.EventGroupMessage,
+		GroupID:      1,
+		RawMessage:   "",
+		ImageContext: "一只猫在睡觉",
+		AtBot:        true,
+	}) {
+		t.Fatal("should handle image message")
+	}
+
+	if !strings.Contains(got, "一只猫在睡觉") {
+		t.Fatalf("expected image context in LLM request, got: %s", got)
+	}
+}
+
 func TestChatIncludesTopicStabilityHint(t *testing.T) {
 	var got string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

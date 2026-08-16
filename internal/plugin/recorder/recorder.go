@@ -132,6 +132,11 @@ func (p *RecorderPlugin) Handle(ctx context.Context, _ plugin.Bot, e *plugin.Eve
 				}
 				continue
 			}
+			if e.ImageContext == "" {
+				e.ImageContext = desc
+			} else {
+				e.ImageContext += "\n" + desc
+			}
 			p.mem.RecordImageContext(e, desc)
 			if p.logger != nil {
 				p.logger.Debug("recorded image context", "group_id", e.GroupID, "user_id", e.UserID, "description", desc)

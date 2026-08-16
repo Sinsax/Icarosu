@@ -161,6 +161,13 @@ func (p *ChatPlugin) Handle(ctx context.Context, bot plugin.Bot, e *plugin.Event
 
 	userMessage := cqAtRegex.ReplaceAllString(e.RawMessage, "")
 	userMessage = strings.TrimSpace(userMessage)
+	if e.ImageContext != "" {
+		if userMessage == "" {
+			userMessage = e.ImageContext
+		} else {
+			userMessage += "\n[图片内容] " + e.ImageContext
+		}
+	}
 	if userMessage == "" {
 		userMessage = "（对方没有说话，随便聊点什么吧）"
 	}
