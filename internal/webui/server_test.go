@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"icarosu/internal/config"
+	"icarosu/internal/logger"
 	"icarosu/internal/webui"
 )
 
@@ -88,5 +89,65 @@ func TestWebUIReloadEndpoint(t *testing.T) {
 	}
 	if m.Get().Bot.Name != "new" {
 		t.Fatalf("expected reloaded name new, got %q", m.Get().Bot.Name)
+	}
+}
+
+func TestWebUIConfigRawUpdate(t *testing.T) {
+	path := writeTestConfig(t, "old")
+	m, err := config.NewManager(path)
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	s := webui.New(m, nil)
+
+	// GET 原始 YAML
+	req := httptest.NewRequest(http.MethodGet, "/api/config/raw", nil)
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `name: "old"`) {
+		t.Fatalf("unexpected raw config response: %d %s", rec.Code, rec.Body.String())
+	}
+
+	// POST 修改后的 YAML 并触发重载
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	updated := strings.Replace(string(data), `name: "old"`, `name: "new"`, 1)
+	req = httptest.NewRequest(http.MethodPost, "/api/config/raw", strings.NewReader(updated))
+	req.Header.Set("Content-Type", "text/plain")
+	rec = httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if m.Get().Bot.Name != "new" {
+		t.Fatalf("expected updated name new, got %q", m.Get().Bot.Name)
+	}
+}
+
+func TestWebUILogsEndpoint(t *testing.T) {
+	m, err := config.NewManager(writeTestConfig(t, "old"))
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	buf := logger.NewBuffer(10)
+	_, _ = buf.Write([]byte("line1\nline2\n"))
+	s := webui.New(m, nil, webui.WithLogBuffer(buf))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/logs?limit=10", nil)
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	var data struct {
+		Logs []string `json:"logs"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &data); err != nil {
+		t.Fatalf("decode logs: %v", err)
+	}
+	if len(data.Logs) != 2 || data.Logs[0] != "line1" || data.Logs[1] != "line2" {
+		t.Fatalf("unexpected logs: %v", data.Logs)
 	}
 }

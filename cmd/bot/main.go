@@ -55,7 +55,7 @@ func main() {
 	}
 	cfg := cfgMgr.Get()
 
-	log := logger.New(cfg.Log.Level)
+	log, logBuf := logger.NewWithBuffer(cfg.Log.Level, 1000)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -221,7 +221,7 @@ func main() {
 
 	eventPool := queue.NewPool(4, 128)
 	if cfg.WebUI.Enabled {
-		webServer := webui.New(cfgMgr, log)
+		webServer := webui.New(cfgMgr, log, webui.WithLogBuffer(logBuf))
 		if err := webServer.Start(); err != nil {
 			log.Error("failed to start webui", "error", err)
 			os.Exit(1)
