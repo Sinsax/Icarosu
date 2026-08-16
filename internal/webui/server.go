@@ -228,20 +228,24 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 			cfg.LLMConfigFile = s.manager.Get().LLMConfigFile
 		}
 
-		data, err := yaml.Marshal(&cfg)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-
 		path := s.manager.Path()
 		old, _ := os.ReadFile(path)
-		if err := os.WriteFile(path, data, 0o644); err != nil {
+		var oldLLM []byte
+		llmPath := ""
+		if cfg.LLMConfigFile != "" {
+			llmPath = config.ProviderPath(path, cfg.LLMConfigFile)
+			oldLLM, _ = os.ReadFile(llmPath)
+		}
+
+		if err := config.WriteSplit(&cfg, path); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		if err := s.manager.Reload(); err != nil {
 			_ = os.WriteFile(path, old, 0o644)
+			if llmPath != "" && oldLLM != nil {
+				_ = os.WriteFile(llmPath, oldLLM, 0o644)
+			}
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -276,14 +280,36 @@ func (s *Server) handleConfigRaw(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		var cfg config.Config
+		if err := yaml.Unmarshal(body, &cfg); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if cfg.Version == 0 {
+			cfg.Version = config.CurrentVersion
+		}
+		if cfg.LLMConfigFile == "" {
+			cfg.LLMConfigFile = s.manager.Get().LLMConfigFile
+		}
+
 		path := s.manager.Path()
 		old, _ := os.ReadFile(path)
-		if err := os.WriteFile(path, body, 0o644); err != nil {
+		var oldLLM []byte
+		llmPath := ""
+		if cfg.LLMConfigFile != "" {
+			llmPath = config.ProviderPath(path, cfg.LLMConfigFile)
+			oldLLM, _ = os.ReadFile(llmPath)
+		}
+
+		if err := config.WriteSplit(&cfg, path); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		if err := s.manager.Reload(); err != nil {
 			_ = os.WriteFile(path, old, 0o644)
+			if llmPath != "" && oldLLM != nil {
+				_ = os.WriteFile(llmPath, oldLLM, 0o644)
+			}
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}

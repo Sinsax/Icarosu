@@ -33,6 +33,53 @@ func writeTempConfig(t *testing.T, content string) string {
 	return path
 }
 
+func TestWriteSplitSeparatesLLM(t *testing.T) {
+	dir, err := os.MkdirTemp(".", ".config-split-test-")
+	if err != nil {
+		t.Fatalf("create temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+
+	mainPath := filepath.Join(dir, "config.yaml")
+	cfg := config.Default()
+	cfg.LLMConfigFile = "llm.yaml"
+	cfg.LLM.Model = "split-llm-model"
+	cfg.VLM.Model = "split-vlm-model"
+
+	if err := config.WriteSplit(cfg, mainPath); err != nil {
+		t.Fatalf("WriteSplit: %v", err)
+	}
+
+	mainData, err := os.ReadFile(mainPath)
+	if err != nil {
+		t.Fatalf("read main config: %v", err)
+	}
+	mainStr := string(mainData)
+	if strings.Contains(mainStr, "\nllm:") || strings.Contains(mainStr, "\nvlm:") {
+		t.Fatalf("main config should not contain llm/vlm sections\n%s", mainStr)
+	}
+	if !strings.Contains(mainStr, "llm_config_file: llm.yaml") {
+		t.Fatalf("main config should reference llm.yaml\n%s", mainStr)
+	}
+
+	llmData, err := os.ReadFile(filepath.Join(dir, "llm.yaml"))
+	if err != nil {
+		t.Fatalf("read llm config: %v", err)
+	}
+	llmStr := string(llmData)
+	if !strings.Contains(llmStr, "split-llm-model") || !strings.Contains(llmStr, "split-vlm-model") {
+		t.Fatalf("llm.yaml should contain llm/vlm models\n%s", llmStr)
+	}
+
+	loaded, err := config.Load(mainPath)
+	if err != nil {
+		t.Fatalf("Load after split: %v", err)
+	}
+	if loaded.LLM.Model != "split-llm-model" || loaded.VLM.Model != "split-vlm-model" {
+		t.Fatalf("unexpected loaded llm/vlm: %+v %+v", loaded.LLM, loaded.VLM)
+	}
+}
+
 func TestLoadMigratesV1ToCurrent(t *testing.T) {
 	old := `# keep this comment
 qq:
