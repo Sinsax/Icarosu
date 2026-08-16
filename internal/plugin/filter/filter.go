@@ -26,7 +26,7 @@ func WithLogger(logger *slog.Logger) Option {
 	}
 }
 
-func New(cfg config.FilterConfig, opts ...Option) plugin.Plugin {
+func New(cfg config.FilterConfig, opts ...Option) *FilterPlugin {
 	p := &FilterPlugin{
 		cfg:    cfg,
 		logger: slog.Default(),
@@ -35,6 +35,11 @@ func New(cfg config.FilterConfig, opts ...Option) plugin.Plugin {
 		opt(p)
 	}
 	return p
+}
+
+// Update 热更新过滤器配置。
+func (p *FilterPlugin) Update(cfg config.FilterConfig) {
+	p.cfg = cfg
 }
 
 func (p *FilterPlugin) Name() string {

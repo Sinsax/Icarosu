@@ -39,6 +39,7 @@ import (
 	"icarosu/internal/tools"
 	"icarosu/internal/vision"
 	"icarosu/internal/vlm"
+	"icarosu/internal/webui"
 )
 
 func main() {
@@ -46,11 +47,12 @@ func main() {
 	flag.StringVar(&configPath, "config", "configs/config.yaml", "path to config file")
 	flag.Parse()
 
-	cfg, err := config.Load(configPath)
+	cfgMgr, err := config.NewManager(configPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "load config: %v\n", err)
 		os.Exit(1)
 	}
+	cfg := cfgMgr.Get()
 
 	log := logger.New(cfg.Log.Level)
 
@@ -135,7 +137,8 @@ func main() {
 	for _, p := range plugin.GlobalPlugins() {
 		manager.Register(p)
 	}
-	manager.Register(filter.New(cfg.Filter, filter.WithLogger(log)))
+	filterPlugin := filter.New(cfg.Filter, filter.WithLogger(log))
+	manager.Register(filterPlugin)
 	recorderOpts := []recorder.Option{recorder.WithLogger(log)}
 	if st != nil {
 		recorderOpts = append(recorderOpts, recorder.WithStore(st))
@@ -157,10 +160,11 @@ func main() {
 		}
 		manager.Register(summarizer.New(llmClient, mem, st, cfg.Memory, summarizerOpts...))
 	}
-	manager.Register(trigger.New(cfg.Bot,
+	triggerPlugin := trigger.New(cfg.Bot,
 		trigger.WithLogger(log),
 		trigger.WithAttention(attentionTracker),
-	))
+	)
+	manager.Register(triggerPlugin)
 	manager.Register(admin.New(cfg.Bot.AdminIDs, mem, st, attentionTracker, admin.WithLogger(log)))
 
 	toolRegistry := tools.New()
@@ -185,7 +189,27 @@ func main() {
 	if memeStore != nil {
 		chatOpts = append(chatOpts, chat.WithMemes(memeStore))
 	}
-	manager.Register(chat.New(llmClient, personaPrompt, chatOpts...))
+	chatPlugin := chat.New(llmClient, personaPrompt, chatOpts...)
+	manager.Register(chatPlugin)
+
+	cfgMgr.OnReload(func(cfg *config.Config) {
+		llmClient.UpdateConfig(llm.Config{
+			BaseURL:        cfg.LLM.BaseURL,
+			APIKey:         cfg.LLM.APIKey,
+			Model:          cfg.LLM.Model,
+			Temperature:    cfg.LLM.Temperature,
+			MaxTokens:      cfg.LLM.MaxTokens,
+			Timeout:        time.Duration(cfg.LLM.TimeoutSeconds) * time.Second,
+			CachePrefix:    cfg.LLM.CachePrefix,
+			CacheMaxTokens: cfg.LLM.CacheMaxTokens,
+			LogCache:       cfg.LLM.LogCache,
+		})
+		filterPlugin.Update(cfg.Filter)
+		triggerPlugin.Update(cfg.Bot)
+		attentionTracker.Update(cfg.Attention)
+		chatPlugin.UpdatePersona(persona.BuildSystemPrompt(cfg.Bot))
+		log.Info("config hot reloaded")
+	})
 
 	limiter := ratelimit.New(5, 10)
 	sessionMgr := session.New(24 * time.Hour)
@@ -193,6 +217,15 @@ func main() {
 	h := handler.New(client, manager, cfg.Bot.SelfID, log, handler.WithRateLimiter(limiter), handler.WithSessionManager(sessionMgr))
 
 	eventPool := queue.NewPool(4, 128)
+	if cfg.WebUI.Enabled {
+		webServer := webui.New(cfgMgr, log)
+		if err := webServer.Start(); err != nil {
+			log.Error("failed to start webui", "error", err)
+			os.Exit(1)
+		}
+		defer webServer.Close()
+	}
+
 	client.SetMessageHandler(func(ctx context.Context, evt qq.Event) {
 		_ = eventPool.Submit(ctx, func(ctx context.Context) {
 			h.Handle(ctx, evt)

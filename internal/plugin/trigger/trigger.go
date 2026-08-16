@@ -23,6 +23,7 @@ type TriggerPlugin struct {
 	logger    *slog.Logger
 
 	mu          sync.Mutex
+	cfgMu       sync.RWMutex
 	lastReplied map[int64]time.Time
 }
 
@@ -43,7 +44,7 @@ func WithLogger(logger *slog.Logger) Option {
 	}
 }
 
-func New(cfg config.BotConfig, opts ...Option) plugin.Plugin {
+func New(cfg config.BotConfig, opts ...Option) *TriggerPlugin {
 	p := &TriggerPlugin{
 		cfg:         cfg,
 		logger:      slog.Default(),
@@ -57,6 +58,18 @@ func New(cfg config.BotConfig, opts ...Option) plugin.Plugin {
 		opt(p)
 	}
 	return p
+}
+
+// Update 热更新触发/人设相关配置。
+func (p *TriggerPlugin) Update(cfg config.BotConfig) {
+	p.cfgMu.Lock()
+	defer p.cfgMu.Unlock()
+	p.cfg = cfg
+	p.botNames = p.botNames[:0]
+	if cfg.Name != "" {
+		p.botNames = append(p.botNames, cfg.Name)
+	}
+	p.botNames = append(p.botNames, cfg.Nicknames...)
 }
 
 func (p *TriggerPlugin) Name() string {
@@ -76,6 +89,9 @@ func (p *TriggerPlugin) Stage() plugin.Stage {
 }
 
 func (p *TriggerPlugin) Handle(_ context.Context, _ plugin.Bot, e *plugin.Event) bool {
+	p.cfgMu.RLock()
+	defer p.cfgMu.RUnlock()
+
 	if e.Type == plugin.EventPrivateMessage {
 		return false
 	}

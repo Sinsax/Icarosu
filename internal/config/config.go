@@ -39,6 +39,7 @@ type Config struct {
 	VLM           VLMConfig       `yaml:"vlm"`
 	Meme          MemeConfig      `yaml:"meme"`
 	Attention     AttentionConfig `yaml:"attention"`
+	WebUI         WebUIConfig     `yaml:"webui"`
 	Log           LogConfig       `yaml:"log"`
 }
 
@@ -106,6 +107,11 @@ type AttentionConfig struct {
 	TripHoldSeconds int     `yaml:"trip_hold_seconds"`
 }
 
+type WebUIConfig struct {
+	Enabled bool   `yaml:"enabled"`
+	Addr    string `yaml:"addr"`
+}
+
 type QQConfig struct {
 	OneBot OneBotConfig `yaml:"onebot"`
 }
@@ -134,7 +140,7 @@ type LogConfig struct {
 
 // 配置文件中各段的预设顺序，迁移/规范化时会按这个顺序重排。
 var (
-	topLevelOrder  = []string{"version", "llm_config_file", "bot", "filter", "memory", "store", "vlm", "meme", "attention", "qq", "llm", "log"}
+	topLevelOrder  = []string{"version", "llm_config_file", "bot", "filter", "memory", "store", "vlm", "meme", "attention", "webui", "qq", "llm", "log"}
 	botOrder       = []string{"self_id", "admin_ids", "name", "nicknames", "personality", "speaking_style", "background", "interests", "mention_reply", "keywords", "random_probability", "interest_reply", "cooldown_seconds", "group_rules", "forbidden", "system_prompt"}
 	filterOrder    = []string{"enabled", "mode", "group_ids", "user_ids"}
 	memoryOrder    = []string{"short_term_size", "long_term_enabled", "context_max_age_minutes", "summary_threshold", "summary_interval_minutes"}
@@ -142,6 +148,7 @@ var (
 	vlmOrder       = []string{"provider", "base_url", "api_key", "model", "timeout_seconds", "prompt"}
 	memeOrder      = []string{"directory", "steal_probability"}
 	attentionOrder = []string{"enabled", "max_score", "decay_per_minute", "boost_at_bot", "boost_mention", "boost_interest", "boost_bot_replied", "trip_hold_seconds"}
+	webuiOrder     = []string{"enabled", "addr"}
 	qqOrder        = []string{"onebot"}
 	onebotOrder    = []string{"ws_url", "access_token"}
 	llmOrder       = []string{"provider", "base_url", "api_key", "model", "temperature", "max_tokens", "timeout_seconds", "cache_prefix", "cache_max_tokens", "log_cache"}
@@ -235,6 +242,10 @@ func Default() *Config {
 			BoostInterest:   15,
 			BoostBotReplied: 10,
 			TripHoldSeconds: 300,
+		},
+		WebUI: WebUIConfig{
+			Enabled: false,
+			Addr:    "127.0.0.1:8080",
 		},
 		Log: LogConfig{
 			Level: "info",
@@ -618,6 +629,14 @@ func applyDefaults(cfg *Config, root *yaml.Node) {
 		cfg.Attention.TripHoldSeconds = def.Attention.TripHoldSeconds
 	}
 
+	webuiNode := findMappingValue(root, "webui")
+	if !cfg.WebUI.Enabled && (webuiNode == nil || findMappingValue(webuiNode, "enabled") == nil) {
+		cfg.WebUI.Enabled = def.WebUI.Enabled
+	}
+	if cfg.WebUI.Addr == "" && (webuiNode == nil || findMappingValue(webuiNode, "addr") == nil) {
+		cfg.WebUI.Addr = def.WebUI.Addr
+	}
+
 	qqNode := findMappingValue(root, "qq")
 	onebotNode := findMappingValue(qqNode, "onebot")
 	if findMappingValue(onebotNode, "ws_url") == nil && cfg.QQ.OneBot.WSURL == "" {
@@ -979,6 +998,9 @@ func canonicalize(root *yaml.Node) {
 	if attentionNode := findMappingValue(root, "attention"); attentionNode != nil {
 		reorderMapping(attentionNode, attentionOrder)
 	}
+	if webuiNode := findMappingValue(root, "webui"); webuiNode != nil {
+		reorderMapping(webuiNode, webuiOrder)
+	}
 	if qqNode := findMappingValue(root, "qq"); qqNode != nil {
 		reorderMapping(qqNode, qqOrder)
 		if onebotNode := findMappingValue(qqNode, "onebot"); onebotNode != nil {
@@ -1003,6 +1025,7 @@ func isCanonical(root *yaml.Node) bool {
 		mappingHasOrder(findMappingValue(root, "vlm"), vlmOrder) &&
 		mappingHasOrder(findMappingValue(root, "meme"), memeOrder) &&
 		mappingHasOrder(findMappingValue(root, "attention"), attentionOrder) &&
+		mappingHasOrder(findMappingValue(root, "webui"), webuiOrder) &&
 		mappingHasOrder(findMappingValue(root, "qq"), qqOrder) &&
 		mappingHasOrder(findMappingValue(findMappingValue(root, "qq"), "onebot"), onebotOrder) &&
 		mappingHasOrder(findMappingValue(root, "llm"), llmOrder) &&

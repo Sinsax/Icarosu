@@ -106,7 +106,7 @@ func WithLogger(logger *slog.Logger) Option {
 	}
 }
 
-func New(client *llm.Client, systemPrompt string, opts ...Option) plugin.Plugin {
+func New(client *llm.Client, systemPrompt string, opts ...Option) *ChatPlugin {
 	p := &ChatPlugin{
 		client:       client,
 		systemPrompt: systemPrompt,
@@ -116,6 +116,14 @@ func New(client *llm.Client, systemPrompt string, opts ...Option) plugin.Plugin 
 		opt(p)
 	}
 	return p
+}
+
+// UpdatePersona 热更新系统人设提示词。
+func (p *ChatPlugin) UpdatePersona(prompt string) {
+	if prompt == "" {
+		return
+	}
+	p.systemPrompt = prompt
 }
 
 func (p *ChatPlugin) Name() string {

@@ -31,6 +31,16 @@ func New(cfg config.AttentionConfig) *Tracker {
 	}
 }
 
+// Update 热更新注意力配置。
+func (t *Tracker) Update(cfg config.AttentionConfig) {
+	if cfg.MaxScore <= 0 {
+		cfg.MaxScore = 100
+	}
+	t.mu.Lock()
+	t.cfg = cfg
+	t.mu.Unlock()
+}
+
 // Observe 根据一条消息更新注意力。
 // atBot: 是否 @ 了机器人；mentioned: 是否提到了 bot 名字；interested: 是否命中兴趣。
 func (t *Tracker) Observe(key int64, atBot, mentioned, interested bool) {

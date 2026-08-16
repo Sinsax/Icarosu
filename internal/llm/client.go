@@ -127,6 +127,16 @@ func NewClient(cfg Config, logger *slog.Logger) *Client {
 	}
 }
 
+// UpdateConfig 热更新客户端配置（超时、模型、密钥等）。
+func (c *Client) UpdateConfig(cfg Config) {
+	timeout := cfg.Timeout
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+	c.config = cfg
+	c.http.Timeout = timeout
+}
+
 // Chat 发送一轮对话，返回模型回复文本（不启用工具调用）。
 func (c *Client) Chat(ctx context.Context, messages []Message) (string, error) {
 	return c.ChatWithTools(ctx, messages, nil, nil)
