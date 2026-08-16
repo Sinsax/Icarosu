@@ -61,8 +61,12 @@ func (m *Manager) Stop(ctx context.Context) error {
 	return nil
 }
 
-// Dispatch 将事件按优先级依次交给插件处理。
-// 某个插件返回 true 时停止分发。
+// Dispatch 按流水线阶段分发事件：
+//  1. 先执行所有 Preprocessor；
+//  2. 再执行所有 Responder，某个插件返回 true 时停止；
+//  3. 最后执行所有 Postprocessor。
+//
+// 每个阶段内部仍按 Priority 从高到低执行。
 func (m *Manager) Dispatch(ctx context.Context, bot Bot, e *Event) {
 	m.mu.RLock()
 	plugins := make([]Plugin, len(m.plugins))
@@ -71,9 +75,14 @@ func (m *Manager) Dispatch(ctx context.Context, bot Bot, e *Event) {
 
 	sortPlugins(plugins)
 
-	for _, p := range plugins {
-		if p.Handle(ctx, bot, e) {
-			return
+	for _, stage := range []Stage{StagePreprocessor, StageResponder, StagePostprocessor} {
+		for _, p := range plugins {
+			if p.Stage() != stage {
+				continue
+			}
+			if p.Handle(ctx, bot, e) {
+				return
+			}
 		}
 	}
 }

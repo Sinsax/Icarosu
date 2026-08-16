@@ -54,6 +54,10 @@ func (p *StyleLearnPlugin) Priority() int {
 	return 910
 }
 
+func (p *StyleLearnPlugin) Stage() plugin.Stage {
+	return plugin.StagePreprocessor
+}
+
 func (p *StyleLearnPlugin) Handle(ctx context.Context, _ plugin.Bot, e *plugin.Event) bool {
 	if e.Type != plugin.EventGroupMessage {
 		return false

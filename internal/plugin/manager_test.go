@@ -45,11 +45,18 @@ type testPlugin struct {
 	plugin.BasePlugin
 	name     string
 	priority int
+	stage    *plugin.Stage
 	handle   func(e *plugin.Event) bool
 }
 
 func (p *testPlugin) Name() string  { return p.name }
 func (p *testPlugin) Priority() int { return p.priority }
+func (p *testPlugin) Stage() plugin.Stage {
+	if p.stage != nil {
+		return *p.stage
+	}
+	return plugin.StageResponder
+}
 func (p *testPlugin) Handle(_ context.Context, _ plugin.Bot, e *plugin.Event) bool {
 	if p.handle != nil {
 		return p.handle(e)
@@ -108,6 +115,76 @@ func TestManagerDispatchRunsObserversUntilHandled(t *testing.T) {
 
 	if len(order) != 2 || order[0] != "observer" || order[1] != "handler" {
 		t.Fatalf("unexpected order: %v", order)
+	}
+}
+
+func TestManagerDispatchRunsStagesInOrder(t *testing.T) {
+	m := plugin.NewManager()
+	var order []string
+	pre := plugin.StagePreprocessor
+	post := plugin.StagePostprocessor
+
+	m.Register(&testPlugin{
+		name:     "post",
+		priority: 100,
+		stage:    &post,
+		handle: func(e *plugin.Event) bool {
+			order = append(order, "post")
+			return false
+		},
+	})
+	m.Register(&testPlugin{
+		name:     "responder",
+		priority: 10,
+		handle: func(e *plugin.Event) bool {
+			order = append(order, "responder")
+			return false
+		},
+	})
+	m.Register(&testPlugin{
+		name:     "pre",
+		priority: 1000,
+		stage:    &pre,
+		handle: func(e *plugin.Event) bool {
+			order = append(order, "pre")
+			return false
+		},
+	})
+
+	m.Dispatch(context.Background(), &mockBot{}, &plugin.Event{Type: plugin.EventGroupMessage})
+
+	if len(order) != 3 || order[0] != "pre" || order[1] != "responder" || order[2] != "post" {
+		t.Fatalf("unexpected stage order: %v", order)
+	}
+}
+
+func TestManagerDispatchPreprocessorCanStopPipeline(t *testing.T) {
+	m := plugin.NewManager()
+	var order []string
+	pre := plugin.StagePreprocessor
+
+	m.Register(&testPlugin{
+		name:     "responder",
+		priority: 10,
+		handle: func(e *plugin.Event) bool {
+			order = append(order, "responder")
+			return false
+		},
+	})
+	m.Register(&testPlugin{
+		name:     "pre",
+		priority: 1000,
+		stage:    &pre,
+		handle: func(e *plugin.Event) bool {
+			order = append(order, "pre")
+			return true
+		},
+	})
+
+	m.Dispatch(context.Background(), &mockBot{}, &plugin.Event{Type: plugin.EventGroupMessage})
+
+	if len(order) != 1 || order[0] != "pre" {
+		t.Fatalf("expected preprocessor to stop pipeline, got %v", order)
 	}
 }
 

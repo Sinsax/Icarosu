@@ -22,6 +22,31 @@ const (
 	EventMeta           EventType = "meta_event"
 )
 
+// Stage 表示插件在事件处理流水线中所处的阶段。
+type Stage int
+
+const (
+	// StagePreprocessor 在响应器之前运行，可记录、过滤、增强或决定是否放行事件。
+	StagePreprocessor Stage = iota
+	// StageResponder 是真正可能产生回复的插件。
+	StageResponder
+	// StagePostprocessor 在响应器之后运行，可对回复进行后处理。
+	StagePostprocessor
+)
+
+func (s Stage) String() string {
+	switch s {
+	case StagePreprocessor:
+		return "preprocessor"
+	case StageResponder:
+		return "responder"
+	case StagePostprocessor:
+		return "postprocessor"
+	default:
+		return "unknown"
+	}
+}
+
 // Image 是消息中的图片信息。
 type Image struct {
 	URL  string
@@ -56,8 +81,10 @@ type Plugin interface {
 	Version() string
 	// Description 返回插件说明。
 	Description() string
-	// Priority 返回优先级，数值越大越先执行。
+	// Priority 返回同一阶段内的优先级，数值越大越先执行。
 	Priority() int
+	// Stage 返回插件所属的流水线阶段。
+	Stage() Stage
 	// Init 在插件管理器启动时调用，用于初始化资源。
 	Init(ctx context.Context, bot Bot) error
 	// Handle 处理一个归一化事件。
@@ -72,6 +99,7 @@ type BasePlugin struct{}
 func (BasePlugin) Version() string                          { return "0.1.0" }
 func (BasePlugin) Description() string                      { return "" }
 func (BasePlugin) Priority() int                            { return 0 }
+func (BasePlugin) Stage() Stage                             { return StageResponder }
 func (BasePlugin) Init(context.Context, Bot) error          { return nil }
 func (BasePlugin) Handle(context.Context, Bot, *Event) bool { return false }
 func (BasePlugin) Stop(context.Context) error               { return nil }

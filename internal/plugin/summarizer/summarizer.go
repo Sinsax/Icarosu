@@ -66,6 +66,10 @@ func (p *SummarizerPlugin) Priority() int {
 	return 920
 }
 
+func (p *SummarizerPlugin) Stage() plugin.Stage {
+	return plugin.StagePreprocessor
+}
+
 func (p *SummarizerPlugin) Handle(ctx context.Context, _ plugin.Bot, e *plugin.Event) bool {
 	if e.Type != plugin.EventGroupMessage {
 		return false

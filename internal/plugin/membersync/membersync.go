@@ -57,6 +57,10 @@ func (p *MemberSyncPlugin) Priority() int {
 	return 930
 }
 
+func (p *MemberSyncPlugin) Stage() plugin.Stage {
+	return plugin.StagePreprocessor
+}
+
 func (p *MemberSyncPlugin) Handle(ctx context.Context, _ plugin.Bot, e *plugin.Event) bool {
 	if e.Type != plugin.EventGroupMessage {
 		return false

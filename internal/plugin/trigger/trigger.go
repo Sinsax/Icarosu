@@ -71,6 +71,10 @@ func (p *TriggerPlugin) Priority() int {
 	return 900
 }
 
+func (p *TriggerPlugin) Stage() plugin.Stage {
+	return plugin.StagePreprocessor
+}
+
 func (p *TriggerPlugin) Handle(_ context.Context, _ plugin.Bot, e *plugin.Event) bool {
 	if e.Type == plugin.EventPrivateMessage {
 		return false

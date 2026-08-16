@@ -50,6 +50,10 @@ func (p *FilterPlugin) Priority() int {
 	return 1000
 }
 
+func (p *FilterPlugin) Stage() plugin.Stage {
+	return plugin.StagePreprocessor
+}
+
 func (p *FilterPlugin) Handle(_ context.Context, _ plugin.Bot, e *plugin.Event) bool {
 	if !p.cfg.Enabled {
 		return false

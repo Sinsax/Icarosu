@@ -69,6 +69,10 @@ func (p *RecorderPlugin) Priority() int {
 	return 950
 }
 
+func (p *RecorderPlugin) Stage() plugin.Stage {
+	return plugin.StagePreprocessor
+}
+
 func (p *RecorderPlugin) Handle(ctx context.Context, _ plugin.Bot, e *plugin.Event) bool {
 	if e.Type == plugin.EventGroupRecall {
 		if p.store != nil {

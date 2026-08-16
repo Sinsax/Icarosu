@@ -53,6 +53,10 @@ func (p *StealPlugin) Priority() int {
 	return 940
 }
 
+func (p *StealPlugin) Stage() plugin.Stage {
+	return plugin.StagePreprocessor
+}
+
 func (p *StealPlugin) Handle(ctx context.Context, _ plugin.Bot, e *plugin.Event) bool {
 	if e.Type != plugin.EventGroupMessage {
 		return false
