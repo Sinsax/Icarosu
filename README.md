@@ -394,3 +394,7 @@ type Plugin interface {
 - 群管理命令
 - 自动摘要旧聊天记录
 - 稳定性、重连、Docker 部署
+
+## 许可证
+
+本项目基于 [MIT License](LICENSE) 开源。
