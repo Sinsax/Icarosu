@@ -23,10 +23,10 @@ type Memory struct {
 	short  map[int64][]Entry
 	size   int
 	maxAge time.Duration
-	store  *store.Store
+	store  store.ConversationStore
 }
 
-func New(size int, st *store.Store) *Memory {
+func New(size int, st store.ConversationStore) *Memory {
 	if size <= 0 {
 		size = 20
 	}
@@ -169,16 +169,23 @@ func (m *Memory) ClearKey(key int64) {
 
 // LongTermMemories 返回某个群的长期记忆文本。
 func (m *Memory) LongTermMemories(groupID int64, limit int) []string {
+	return m.LongTermMemoriesForGroups([]int64{groupID}, limit)
+}
+
+// LongTermMemoriesForGroups 返回多个群（互通组）的长期记忆文本。
+func (m *Memory) LongTermMemoriesForGroups(groupIDs []int64, limit int) []string {
 	if m.store == nil {
 		return nil
 	}
-	records, err := m.store.GetMemories(groupID, limit)
-	if err != nil {
-		return nil
-	}
-	out := make([]string, 0, len(records))
-	for _, r := range records {
-		out = append(out, r.Content)
+	out := make([]string, 0, len(groupIDs)*limit)
+	for _, groupID := range groupIDs {
+		records, err := m.store.GetMemories(groupID, limit)
+		if err != nil {
+			continue
+		}
+		for _, r := range records {
+			out = append(out, r.Content)
+		}
 	}
 	return out
 }

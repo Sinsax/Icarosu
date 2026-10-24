@@ -16,7 +16,7 @@ import (
 // Service 是基于 VLM 的通用图片理解服务。
 // 它既提供图片内容描述供群聊上下文使用，也提供“偷表情包”能力。
 type Service struct {
-	client *vlm.Client
+	client vlm.Analyzer
 	memes  *meme.Store
 	cfg    config.MemeConfig
 
@@ -29,7 +29,7 @@ type cacheEntry struct {
 	expires time.Time
 }
 
-func New(client *vlm.Client, memes *meme.Store, cfg config.MemeConfig) *Service {
+func New(client vlm.Analyzer, memes *meme.Store, cfg config.MemeConfig) *Service {
 	return &Service{
 		client: client,
 		memes:  memes,

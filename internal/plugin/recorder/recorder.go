@@ -18,7 +18,7 @@ import (
 type RecorderPlugin struct {
 	plugin.BasePlugin
 	mem     *memory.Memory
-	store   *store.Store
+	store   store.RecorderStore
 	vision  *vision.Service
 	topic   *topic.Tracker
 	logger  *slog.Logger
@@ -28,7 +28,7 @@ type RecorderPlugin struct {
 type Option func(*RecorderPlugin)
 
 // WithStore 设置数据库存储。
-func WithStore(st *store.Store) Option {
+func WithStore(st store.RecorderStore) Option {
 	return func(p *RecorderPlugin) {
 		p.store = st
 	}
@@ -112,6 +112,7 @@ func (p *RecorderPlugin) Handle(ctx context.Context, _ plugin.Bot, e *plugin.Eve
 
 	if p.store != nil && e.Type == plugin.EventGroupMessage {
 		_ = p.store.RecordActivity(e.GroupID, e.UserID, time.Now())
+		_ = p.store.UpsertUserProfile(e.GroupID, e.UserID, e.SenderName)
 		if e.ReplyToMessageID != 0 {
 			_ = p.store.SaveReply(e.GroupID, e.UserID, e.MessageID, e.ReplyToMessageID)
 		}
@@ -148,4 +149,15 @@ func (p *RecorderPlugin) Handle(ctx context.Context, _ plugin.Bot, e *plugin.Eve
 		p.logger.Debug("recorded message", "type", e.Type, "group_id", e.GroupID, "user_id", e.UserID)
 	}
 	return false
+}
+
+// HandleContext 实现 ContextualPlugin，在保留原 Handle 行为的同时，
+// 把图片识别结果写入流水线中间产物，供后续阶段（如 trigger/chat）读取。
+func (p *RecorderPlugin) HandleContext(ctx context.Context, bot plugin.Bot, pc *plugin.Context) bool {
+	e := pc.Event
+	handled := p.Handle(ctx, bot, e)
+	if e.ImageContext != "" {
+		pc.Set("image_context", e.ImageContext)
+	}
+	return handled
 }

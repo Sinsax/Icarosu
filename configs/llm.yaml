@@ -1,17 +1,20 @@
-# LLM / VLM 独立配置文件
+# LLM / VLM 独立配置文件（模板）
+# 用法：复制为 configs/llm.local.yaml 再填入真实 api_key；llm.local.yaml 已被 .gitignore 忽略
 # 在主配置 config.yaml 中通过 llm_config_file 指定本文件路径
 
 # Provider 列表：统一管理 base_url / api_key / 可用模型
 providers:
   opencode:
     base_url: https://opencode.ai/zen/go/v1
-    api_key: "REDACTED"
+    api_key: ""   # 在这里填入你的 API Key（真实值请写在 configs/llm.local.yaml）
     models: 
       - name: "deepseek-v4-flash"
         kind: "llm"
+      - name: "mimo-v2.5"
+        kind: "vlm"
   freellmapi:
     base_url: "http://192.168.0.155:3002/v1"
-    api_key: "REDACTED"
+    api_key: ""   # 在这里填入你的 API Key
     models:
       - name: "auto"
         kind: "vlm"
@@ -30,7 +33,7 @@ llm:
 
 # VLM 图片识别：直接引用 provider + model
 vlm:
-  provider: "freellmapi"
-  model: "auto"
+  provider: "opencode"
+  model: "mimo-v2.5"
   timeout_seconds: 30
   prompt: "你是一个通用图片理解助手。描述这张图片的内容，并判断它是否适合作为群聊表情包/梗图，以及是否符合 bot 的人设。只输出 JSON：{\"description\":\"图片内容描述\",\"is_meme\":true/false,\"fits_persona\":true/false,\"reason\":\"简短原因\",\"tags\":[\"标签\"],\"name\":\"表情名\"}"

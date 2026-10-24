@@ -16,3 +16,7 @@ data/
 .vscode/
 
 MaiBot/
+
+# 测试临时产物
+.app-run-test-*/
+*.db

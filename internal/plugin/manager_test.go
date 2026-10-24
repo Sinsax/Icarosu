@@ -216,6 +216,58 @@ func TestManagerDispatchPreprocessorCanStopPipeline(t *testing.T) {
 	}
 }
 
+type contextTestPlugin struct {
+	plugin.BasePlugin
+	name          string
+	stage         plugin.Stage
+	handleContext func(*plugin.Context) bool
+}
+
+func (p *contextTestPlugin) Name() string { return p.name }
+
+func (p *contextTestPlugin) Stage() plugin.Stage { return p.stage }
+
+func (p *contextTestPlugin) HandleContext(_ context.Context, _ plugin.Bot, pc *plugin.Context) bool {
+	if p.handleContext != nil {
+		return p.handleContext(pc)
+	}
+	return false
+}
+
+func TestManagerDispatchRunsPostprocessorAfterResponderHandled(t *testing.T) {
+	m := plugin.NewManager()
+	var order []string
+	responder := plugin.StageResponder
+	post := plugin.StagePostprocessor
+
+	m.Register(&contextTestPlugin{
+		name:  "post",
+		stage: post,
+		handleContext: func(pc *plugin.Context) bool {
+			order = append(order, "post")
+			if pc.Get("reply") != "hi" {
+				t.Fatalf("expected reply intermediate data, got %v", pc.Get("reply"))
+			}
+			return false
+		},
+	})
+	m.Register(&contextTestPlugin{
+		name:  "responder",
+		stage: responder,
+		handleContext: func(pc *plugin.Context) bool {
+			order = append(order, "responder")
+			pc.Set("reply", "hi")
+			return true
+		},
+	})
+
+	m.Dispatch(context.Background(), &mockBot{}, &plugin.Event{})
+
+	if len(order) != 2 || order[0] != "responder" || order[1] != "post" {
+		t.Fatalf("expected responder then postprocessor, got %v", order)
+	}
+}
+
 func TestRegistryRejectsDuplicateNames(t *testing.T) {
 	r := &plugin.Registry{}
 	r.Register(&testPlugin{name: "x"})

@@ -119,6 +119,20 @@ attention:
   # 持续满注意力多少秒后熔断归零
   trip_hold_seconds: 300
 
+# 记忆互通组：默认每个群记忆完全隔离；同一组内的群会共享长期记忆
+# memory_share_groups:
+#   - name: "朋友群共享记忆"
+#     group_ids:
+#       - 10001
+#       - 10002
+
+# 表达方式互通组：同一组内的群会共享学习到的表达方式/口癖
+# expression_share_groups:
+#   - name: "一起玩梗"
+#     group_ids:
+#       - 10001
+#       - 10003
+
 # 本地 WebUI / 配置热更新
 webui:
   enabled: true

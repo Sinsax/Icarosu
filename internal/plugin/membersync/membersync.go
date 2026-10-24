@@ -15,7 +15,7 @@ import (
 type MemberSyncPlugin struct {
 	plugin.BasePlugin
 	client *qq.Client
-	store  *store.Store
+	store  store.MemberRepository
 	logger *slog.Logger
 
 	mu     sync.Mutex
@@ -32,7 +32,7 @@ func WithLogger(logger *slog.Logger) Option {
 	}
 }
 
-func New(client *qq.Client, st *store.Store, opts ...Option) plugin.Plugin {
+func New(client *qq.Client, st store.MemberRepository, opts ...Option) plugin.Plugin {
 	p := &MemberSyncPlugin{
 		client: client,
 		store:  st,

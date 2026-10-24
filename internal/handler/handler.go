@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"icarosu/internal/obs"
 	"icarosu/internal/plugin"
 	"icarosu/internal/qq"
 	"icarosu/internal/ratelimit"
@@ -21,6 +22,7 @@ type Handler struct {
 
 	sessions *session.Manager
 	limiter  *ratelimit.Limiter
+	metrics  *obs.Metrics
 }
 
 // WithRateLimiter 设置全局/按群限流器。
@@ -37,6 +39,13 @@ func WithSessionManager(sm *session.Manager) func(*Handler) {
 	}
 }
 
+// WithMetrics 设置运行时指标。
+func WithMetrics(m *obs.Metrics) func(*Handler) {
+	return func(h *Handler) {
+		h.metrics = m
+	}
+}
+
 func New(bot plugin.Bot, manager *plugin.Manager, selfID int64, logger *slog.Logger, opts ...func(*Handler)) *Handler {
 	h := &Handler{
 		bot:      bot,
@@ -44,6 +53,7 @@ func New(bot plugin.Bot, manager *plugin.Manager, selfID int64, logger *slog.Log
 		selfID:   selfID,
 		logger:   logger,
 		sessions: session.New(0),
+		metrics:  obs.NewMetrics(),
 	}
 	for _, opt := range opts {
 		opt(h)
@@ -58,6 +68,9 @@ func (h *Handler) lockFor(key int64) *session.Session {
 
 // Handle 处理一个 OneBot 事件。
 func (h *Handler) Handle(ctx context.Context, evt qq.Event) {
+	if h.metrics != nil {
+		h.metrics.IncMessagesReceived()
+	}
 	switch evt.PostType {
 	case "message":
 		h.handleMessage(ctx, evt)

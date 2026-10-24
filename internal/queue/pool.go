@@ -11,9 +11,10 @@ type Job func(ctx context.Context)
 // Pool 是一个有界队列 + 固定 worker 数的工作池。
 // 用于限制并发处理数，避免事件/LLM 任务无限并发。
 type Pool struct {
-	workers int
-	jobs    chan Job
-	wg      sync.WaitGroup
+	workers   int
+	jobs      chan Job
+	wg        sync.WaitGroup
+	closeOnce sync.Once
 }
 
 // NewPool 创建一个工作池并立即启动 workers。
@@ -48,10 +49,12 @@ func (p *Pool) Submit(ctx context.Context, job Job) error {
 	}
 }
 
-// Close 停止接收新任务，并等待已提交任务全部完成。
+// Close 停止接收新任务，并等待已提交任务全部完成。可安全调用多次。
 func (p *Pool) Close() {
-	close(p.jobs)
-	p.wg.Wait()
+	p.closeOnce.Do(func() {
+		close(p.jobs)
+		p.wg.Wait()
+	})
 }
 
 func (p *Pool) worker() {

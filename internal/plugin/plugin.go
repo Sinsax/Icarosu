@@ -1,6 +1,9 @@
 package plugin
 
-import "context"
+import (
+	"context"
+	"sync"
+)
 
 // Bot 是插件可用的机器人能力接口。
 // 后续需要更多能力（发图片、撤回、管理群等）时，扩展这个接口并在 qq.Client 中实现。
@@ -70,6 +73,54 @@ type Event struct {
 	Raw              []byte
 }
 
+// Context 是插件流水线上下文，用于在插件之间传递中间产物。
+// Event 保持向后兼容；Data 用于存放下一个阶段需要读取的临时数据。
+// Data 使用读写锁保护，可在插件 goroutine 中安全读写。
+type Context struct {
+	mu    sync.RWMutex
+	Event *Event
+	Data  map[string]any
+}
+
+// NewContext 创建带事件和空 Data 的流水线上下文。
+func NewContext(e *Event) *Context {
+	if e == nil {
+		e = &Event{}
+	}
+	return &Context{Event: e, Data: make(map[string]any)}
+}
+
+// Set 写入一个中间产物。
+func (c *Context) Set(key string, v any) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.Data == nil {
+		c.Data = make(map[string]any)
+	}
+	c.Data[key] = v
+}
+
+// Get 读取一个中间产物，不存在时返回 nil。
+func (c *Context) Get(key string) any {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.Data == nil {
+		return nil
+	}
+	return c.Data[key]
+}
+
+// Has 判断某个中间产物是否存在。
+func (c *Context) Has(key string) bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.Data == nil {
+		return false
+	}
+	_, ok := c.Data[key]
+	return ok
+}
+
 // Plugin 是机器人插件的最底层抽象。
 //
 // 约定：
@@ -92,6 +143,13 @@ type Plugin interface {
 	Handle(ctx context.Context, bot Bot, e *Event) bool
 	// Stop 在程序退出时调用，用于释放资源。
 	Stop(ctx context.Context) error
+}
+
+// ContextualPlugin 是可选接口：实现后 Manager 会优先调用 HandleContext，
+// 使插件可以读写流水线中间产物 Context.Data。
+type ContextualPlugin interface {
+	Plugin
+	HandleContext(ctx context.Context, bot Bot, pc *Context) bool
 }
 
 // BasePlugin 提供默认实现，插件可内嵌它以减少样板代码。

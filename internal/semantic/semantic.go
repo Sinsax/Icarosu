@@ -90,14 +90,22 @@ func normalize(v []float32) {
 	}
 }
 
+// VectorMemoryStore 是语义检索依赖的向量记忆存储能力。
+// 目前由 *store.Store 实现；未来可以替换为 Chroma/Milvus/Qdrant 等向量数据库适配器。
+type VectorMemoryStore interface {
+	SaveMemory(groupID, userID int64, content string) error
+	SaveMemoryWithVector(groupID, userID int64, content string, vector []float32) (int64, error)
+	SearchMemories(groupID int64, query []float32, limit int) ([]store.MemoryRecord, error)
+}
+
 // Service 是语义记忆服务：负责写入带向量的长期记忆，并按语义检索。
 type Service struct {
-	store    *store.Store
+	store    VectorMemoryStore
 	embedder Embedder
 	logger   *slog.Logger
 }
 
-func NewService(st *store.Store, embedder Embedder, logger *slog.Logger) *Service {
+func NewService(st VectorMemoryStore, embedder Embedder, logger *slog.Logger) *Service {
 	if embedder == nil {
 		embedder = NewLocalEmbedder(256)
 	}

@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand"
-	"regexp"
-	"strings"
 
+	corechat "icarosu/internal/core/chat"
+	"icarosu/internal/core/domain"
 	"icarosu/internal/attention"
 	"icarosu/internal/llm"
 	"icarosu/internal/meme"
@@ -22,31 +22,57 @@ import (
 	"icarosu/internal/topic"
 )
 
-var (
-	cqAtRegex     = regexp.MustCompile(`\[CQ:at(?:,[^\]]*)?\]`)
-	bulletRegex   = regexp.MustCompile(`^[-*]\s+`)
-	numberedRegex = regexp.MustCompile(`^\d+[.、)]\s*`)
-)
+// memoryAdapter 把 *memory.Memory 适配成 corechat.Memory 接口。
+type memoryAdapter struct {
+	inner *memory.Memory
+}
+
+func (a memoryAdapter) Recent(m *domain.ChatMessage, limit int) []memory.Entry {
+	return a.inner.Recent(toPluginEvent(m), limit)
+}
+
+func (a memoryAdapter) LongTermMemoriesForGroups(groupIDs []int64, limit int) []string {
+	return a.inner.LongTermMemoriesForGroups(groupIDs, limit)
+}
+
+func (a memoryAdapter) RecordReply(m *domain.ChatMessage, reply string) {
+	a.inner.RecordReply(toPluginEvent(m), reply)
+}
+
+func toPluginEvent(m *domain.ChatMessage) *plugin.Event {
+	typ := plugin.EventPrivateMessage
+	if m.Type == domain.MessageGroup {
+		typ = plugin.EventGroupMessage
+	}
+	images := make([]plugin.Image, 0, len(m.Images))
+	for _, img := range m.Images {
+		images = append(images, plugin.Image{URL: img.URL, File: img.File})
+	}
+	return &plugin.Event{
+		Type:             typ,
+		GroupID:          m.GroupID,
+		UserID:           m.UserID,
+		MessageID:        m.MessageID,
+		RawMessage:       m.RawMessage,
+		SenderName:       m.SenderName,
+		AtBot:            m.AtBot,
+		Images:           images,
+		ReplyToMessageID: m.ReplyToMessageID,
+		ReplyToUserID:    m.ReplyToUserID,
+		OperatorID:       m.OperatorID,
+		ImageContext:     m.ImageContext,
+	}
+}
 
 // ChatPlugin 是 LLM 对话插件。
-// 当前策略：
-//   - 私聊消息直接回复
-//   - 群聊只有被 @ 时才回复
-//
-// 支持注册工具，让模型可以调用工具后给出更丰富的内容。
+// 核心回复逻辑已经下沉到 internal/core/chat，这里保留事件适配和少量发送/工具逻辑。
 type ChatPlugin struct {
 	plugin.BasePlugin
-	client       *llm.Client
-	systemPrompt string
-	tools        *tools.Registry
-	mem          *memory.Memory
-	memes        *meme.Store
-	store        *store.Store
-	semantic     *semantic.Service
-	styleLib     *style.Library
-	attention    *attention.Tracker
-	topic        *topic.Tracker
-	logger       *slog.Logger
+	svc    *corechat.Service
+	client llm.Provider
+	memes  *meme.Store
+	tools  *tools.Registry
+	logger *slog.Logger
 }
 
 // Option 用于配置 ChatPlugin。
@@ -62,7 +88,9 @@ func WithTools(registry *tools.Registry) Option {
 // WithMemory 设置短期/长期记忆服务。
 func WithMemory(mem *memory.Memory) Option {
 	return func(p *ChatPlugin) {
-		p.mem = mem
+		if p.svc != nil {
+			corechat.WithMemory(memoryAdapter{inner: mem})(p.svc)
+		}
 	}
 }
 
@@ -76,35 +104,72 @@ func WithMemes(store *meme.Store) Option {
 // WithStyleLibrary 设置表达方式库。
 func WithStyleLibrary(lib *style.Library) Option {
 	return func(p *ChatPlugin) {
-		p.styleLib = lib
+		if p.svc != nil {
+			corechat.WithStyleLibrary(lib)(p.svc)
+		}
 	}
 }
 
 // WithStore 设置数据库存储，用于载入活跃时间/互动/事件等上下文。
-func WithStore(st *store.Store) Option {
+func WithStore(st store.ChatContextStore) Option {
 	return func(p *ChatPlugin) {
-		p.store = st
+		if p.svc != nil {
+			corechat.WithStore(st)(p.svc)
+		}
 	}
 }
 
-// WithSemantic 设置语义记忆服务，用于按当前话题检索相关长期记忆。
+// WithSemantic 设置语义记忆服务。
 func WithSemantic(svc *semantic.Service) Option {
 	return func(p *ChatPlugin) {
-		p.semantic = svc
+		if p.svc != nil {
+			corechat.WithSemantic(svc)(p.svc)
+		}
 	}
 }
 
 // WithTopicTracker 设置话题稳定性跟踪器。
 func WithTopicTracker(t *topic.Tracker) Option {
 	return func(p *ChatPlugin) {
-		p.topic = t
+		if p.svc != nil {
+			corechat.WithTopicTracker(t)(p.svc)
+		}
 	}
 }
 
 // WithAttention 设置注意力系统。
 func WithAttention(t *attention.Tracker) Option {
 	return func(p *ChatPlugin) {
-		p.attention = t
+		if p.svc != nil {
+			corechat.WithAttention(t)(p.svc)
+		}
+	}
+}
+
+// WithGroupScope 设置群维度隔离与互通组解析器。
+func WithGroupScope(sc corechat.GroupScope) Option {
+	return func(p *ChatPlugin) {
+		if p.svc != nil {
+			corechat.WithGroupScope(sc)(p.svc)
+		}
+	}
+}
+
+// WithJargons 设置群黑话查询能力。
+func WithJargons(provider corechat.JargonProvider) Option {
+	return func(p *ChatPlugin) {
+		if p.svc != nil {
+			corechat.WithJargons(provider)(p.svc)
+		}
+	}
+}
+
+// WithProfiles 设置群用户画像查询能力。
+func WithProfiles(provider corechat.ProfileProvider) Option {
+	return func(p *ChatPlugin) {
+		if p.svc != nil {
+			corechat.WithProfiles(provider)(p.svc)
+		}
 	}
 }
 
@@ -112,15 +177,18 @@ func WithAttention(t *attention.Tracker) Option {
 func WithLogger(logger *slog.Logger) Option {
 	return func(p *ChatPlugin) {
 		p.logger = logger
+		if p.svc != nil {
+			corechat.WithLogger(logger)(p.svc)
+		}
 	}
 }
 
-func New(client *llm.Client, systemPrompt string, opts ...Option) *ChatPlugin {
+func New(client llm.Provider, systemPrompt string, opts ...Option) *ChatPlugin {
 	p := &ChatPlugin{
-		client:       client,
-		systemPrompt: systemPrompt,
-		logger:       slog.Default(),
+		client: client,
+		logger: slog.Default(),
 	}
+	p.svc = corechat.New(systemPrompt, corechat.WithLogger(p.logger))
 	for _, opt := range opts {
 		opt(p)
 	}
@@ -129,10 +197,9 @@ func New(client *llm.Client, systemPrompt string, opts ...Option) *ChatPlugin {
 
 // UpdatePersona 热更新系统人设提示词。
 func (p *ChatPlugin) UpdatePersona(prompt string) {
-	if prompt == "" {
-		return
+	if p.svc != nil {
+		p.svc.UpdatePersona(prompt)
 	}
-	p.systemPrompt = prompt
 }
 
 func (p *ChatPlugin) Name() string {
@@ -148,6 +215,22 @@ func (p *ChatPlugin) Priority() int {
 }
 
 func (p *ChatPlugin) Handle(ctx context.Context, bot plugin.Bot, e *plugin.Event) bool {
+	pc := plugin.NewContext(e)
+	handled := p.HandleContext(ctx, bot, pc)
+	if handled {
+		if reply, ok := pc.Get("reply").(string); ok && reply != "" {
+			forceSplit, _ := pc.Get("force_split").(bool)
+			p.sendReply(ctx, bot, e, reply, forceSplit)
+		}
+	}
+	return handled
+}
+
+// HandleContext 实现 ContextualPlugin。
+// 它只负责生成回复并写入流水线中间产物，由 Postprocessor sender 负责最终发送。
+func (p *ChatPlugin) HandleContext(ctx context.Context, bot plugin.Bot, pc *plugin.Context) bool {
+	e := pc.Event
+	dm := plugin.ToDomainMessage(e)
 	if p.client == nil {
 		return false
 	}
@@ -159,8 +242,7 @@ func (p *ChatPlugin) Handle(ctx context.Context, bot plugin.Bot, e *plugin.Event
 		return false
 	}
 
-	userMessage := cqAtRegex.ReplaceAllString(e.RawMessage, "")
-	userMessage = strings.TrimSpace(userMessage)
+	userMessage := corechat.CleanMessage(e.RawMessage)
 	if e.ImageContext != "" {
 		if userMessage == "" {
 			userMessage = e.ImageContext
@@ -181,7 +263,7 @@ func (p *ChatPlugin) Handle(ctx context.Context, bot plugin.Bot, e *plugin.Event
 		)
 	}
 
-	messages := p.buildMessages(ctx, e, userMessage)
+	messages := p.svc.BuildMessages(ctx, dm, userMessage)
 
 	var reply string
 	var err error
@@ -194,33 +276,24 @@ func (p *ChatPlugin) Handle(ctx context.Context, bot plugin.Bot, e *plugin.Event
 		if p.logger != nil {
 			p.logger.Error("chat llm error", "error", err)
 		}
-		// 当前先简单返回错误提示，后续可做重试和降级。
 		reply = "（我脑子刚才短路了一下，等会再聊）"
 	}
-	reply = postprocessReply(reply)
+	reply = corechat.PostprocessReply(reply)
 
 	// 如果有多个自然分句，按概率选择“拆成多条发送”，而不是截断丢句。
-	parts := naturalParts(reply)
+	parts := corechat.NaturalParts(reply)
 	forceSplit := len(parts) >= 2 && rand.Float64() < 0.5
 
 	if !forceSplit {
-		truncated, needPolish := smartTruncate(reply, 7)
+		truncated, needPolish := corechat.SmartTruncate(reply, 7)
 		if needPolish {
 			truncated = p.polishReply(ctx, reply)
 		}
 		reply = truncated
 	}
 
-	if p.topic != nil {
-		key := e.GroupID
-		if e.Type == plugin.EventPrivateMessage {
-			key = e.UserID
-		}
-		p.topic.RecordReply(ctx, key, reply)
-	}
-
-	if p.mem != nil {
-		p.mem.RecordReply(e, reply)
+	if p.svc != nil {
+		p.svc.RecordReply(ctx, dm, reply)
 	}
 
 	if p.logger != nil {
@@ -233,9 +306,11 @@ func (p *ChatPlugin) Handle(ctx context.Context, bot plugin.Bot, e *plugin.Event
 		)
 	}
 
-	p.sendReply(ctx, bot, e, reply, forceSplit)
-	if p.attention != nil && e.Type == plugin.EventGroupMessage {
-		p.attention.OnBotReplied(e.GroupID)
+	pc.Set("reply", reply)
+	pc.Set("force_split", forceSplit)
+
+	if p.svc != nil {
+		p.svc.OnBotReplied(dm)
 	}
 	return true
 }
@@ -251,43 +326,12 @@ func (p *ChatPlugin) sendReply(ctx context.Context, bot plugin.Bot, e *plugin.Ev
 	}
 
 	if forceSplit {
-		for _, part := range naturalParts(reply) {
+		for _, part := range corechat.NaturalParts(reply) {
 			send(part)
 		}
 		return
 	}
 	send(reply)
-}
-
-// naturalParts 按自然分句拆分回复，返回多个短句。
-func naturalParts(reply string) []string {
-	reply = strings.TrimSpace(reply)
-	if reply == "" {
-		return nil
-	}
-
-	var parts []string
-	var cur []rune
-	flush := func() {
-		text := strings.TrimSpace(strings.TrimRight(string(cur), "，、；： "))
-		if text != "" {
-			parts = append(parts, text)
-		}
-		cur = nil
-	}
-
-	for _, r := range reply {
-		cur = append(cur, r)
-		if strings.ContainsRune("。！？…\n", r) || strings.ContainsRune("，、；：", r) || r == ' ' {
-			flush()
-		}
-	}
-	flush()
-
-	if len(parts) == 0 {
-		return []string{reply}
-	}
-	return parts
 }
 
 // toolExecutor 包装工具注册表，并支持发送图片到当前聊天。
@@ -338,225 +382,12 @@ func (p *ChatPlugin) toolExecutor(e *plugin.Event, bot plugin.Bot) llm.ToolExecu
 			}
 			return "图片已发送", nil
 		}
+		if p.tools == nil {
+			return "", fmt.Errorf("tools registry is nil")
+		}
 		return p.tools.Execute(ctx, name, arguments)
 	}
 }
-
-// detectStyleTags 从最近聊天中粗略识别群聊风格标签。
-func (p *ChatPlugin) detectStyleTags(e *plugin.Event) []string {
-	if p.mem == nil {
-		return nil
-	}
-	recent := p.mem.Recent(e, 12)
-	var tags []string
-	addTag := func(t string) {
-		for _, x := range tags {
-			if x == t {
-				return
-			}
-		}
-		tags = append(tags, t)
-	}
-
-	for _, entry := range recent {
-		text := strings.ToLower(entry.Content)
-		switch {
-		case strings.Contains(text, "哈哈"), strings.Contains(text, "笑死"), strings.Contains(text, "草"):
-			addTag("funny")
-			addTag("laugh")
-		case strings.Contains(text, "？"), strings.Contains(text, "真的假的"), strings.Contains(text, "细说"):
-			addTag("question")
-		case strings.Contains(text, "睡"), strings.Contains(text, "晚安"), strings.Contains(text, "夜"), strings.Contains(text, "困"):
-			addTag("night")
-			addTag("sleep")
-		case strings.Contains(text, "吃"), strings.Contains(text, "饭"), strings.Contains(text, "饿"):
-			addTag("food")
-		case strings.Contains(text, "摸鱼"), strings.Contains(text, "躺"), strings.Contains(text, "懒"):
-			addTag("lazy")
-		}
-	}
-	return tags
-}
-
-// maybeSimplifyReply 小概率把回复简化成一个很懒的短词/字。
-func (p *ChatPlugin) maybeSimplifyReply(reply string, tags []string) (string, bool) {
-	if p.styleLib == nil {
-		return reply, false
-	}
-	if rand.Float64() > 0.12 {
-		return reply, false
-	}
-
-	candidates := []string{"确实", "？", "哈哈", "行吧", "啊？", "好", "嗯", "对", "没吃"}
-	if hasTag(tags, "funny") {
-		candidates = append(candidates, "哈哈", "笑死")
-	}
-	if hasTag(tags, "question") {
-		candidates = append(candidates, "？", "真的假的")
-	}
-	if hasTag(tags, "food") {
-		candidates = append(candidates, "没吃", "行吧", "确实")
-	}
-	if hasTag(tags, "lazy") {
-		candidates = append(candidates, "行吧", "嗯", "懒得动")
-	}
-	return candidates[rand.Intn(len(candidates))], true
-}
-
-func hasTag(tags []string, target string) bool {
-	for _, t := range tags {
-		if t == target {
-			return true
-		}
-	}
-	return false
-}
-
-// semanticMemories 优先按当前消息语义检索长期记忆；没有向量结果时退回最近长期记忆。
-func (p *ChatPlugin) semanticMemories(ctx context.Context, groupID int64, query string) string {
-	if p.semantic != nil {
-		records, err := p.semantic.Search(ctx, groupID, query, 5)
-		if err == nil && len(records) > 0 {
-			var contents []string
-			for _, r := range records {
-				contents = append(contents, r.Content)
-			}
-			return "你对这个群的长期记忆：\n" + strings.Join(contents, "\n")
-		}
-	}
-
-	if p.mem == nil {
-		return ""
-	}
-	memories := p.mem.LongTermMemories(groupID, 5)
-	if len(memories) == 0 {
-		return ""
-	}
-	return "你对这个群的长期记忆：\n" + strings.Join(memories, "\n")
-}
-
-// groupDataContext 把已收集的活跃时间/互动/事件作为上下文载入。
-func (p *ChatPlugin) groupDataContext(e *plugin.Event) string {
-	var hints []string
-
-	if hours, err := p.store.GetUserActiveHours(e.GroupID, e.UserID, 3); err == nil && len(hours) > 0 {
-		var parts []string
-		for _, h := range hours {
-			parts = append(parts, fmt.Sprintf("周%d %d点", h.Weekday, h.Hour))
-		}
-		hints = append(hints, e.SenderName+"常活跃: "+strings.Join(parts, "、"))
-	}
-
-	if interactions, err := p.store.GetTopInteractions(e.GroupID, 3); err == nil && len(interactions) > 0 {
-		var parts []string
-		for _, it := range interactions {
-			parts = append(parts, fmt.Sprintf("%d↔%d x%d", it.FromUserID, it.ToUserID, it.Count))
-		}
-		hints = append(hints, "群内互动: "+strings.Join(parts, "、"))
-	}
-
-	if events, err := p.store.GetEventsByUser(e.GroupID, e.UserID, 3); err == nil && len(events) > 0 {
-		var parts []string
-		for _, ev := range events {
-			parts = append(parts, ev.Title)
-		}
-		hints = append(hints, "相关事件: "+strings.Join(parts, "、"))
-	}
-
-	if len(hints) == 0 {
-		return ""
-	}
-	return "群数据参考：\n" + strings.Join(hints, "\n")
-}
-
-// buildMessages 组装发给 LLM 的消息，包含系统人设、长期记忆和最近群聊上下文。
-func (p *ChatPlugin) buildMessages(ctx context.Context, e *plugin.Event, currentMessage string) []llm.Message {
-	messages := []llm.Message{
-		{Role: "system", Content: p.systemPrompt},
-	}
-
-	tags := p.detectStyleTags(e)
-	if len(tags) > 0 {
-		hint := "当前群聊风格标签：" + strings.Join(tags, ",") + "。请贴合这种氛围，不要客气，不要完整收尾。"
-		messages = append(messages, llm.Message{Role: "system", Content: hint})
-
-		if p.styleLib != nil {
-			if samples := p.styleLib.SampleByTags(tags, 3); len(samples) > 0 {
-				messages = append(messages, llm.Message{Role: "system", Content: "参考表达方式：\n" + strings.Join(samples, "\n")})
-			}
-		}
-	}
-
-	if p.topic != nil {
-		key := e.GroupID
-		if e.Type == plugin.EventPrivateMessage {
-			key = e.UserID
-		}
-		if hint := p.topic.Hint(ctx, key, currentMessage); hint != "" {
-			messages = append(messages, llm.Message{Role: "system", Content: hint})
-		}
-	}
-
-	if p.mem == nil {
-		messages = append(messages, llm.Message{Role: "user", Content: currentMessage})
-		return messages
-	}
-
-	if e.Type == plugin.EventGroupMessage {
-		memoryText := p.semanticMemories(ctx, e.GroupID, currentMessage)
-		if memoryText != "" {
-			messages = append(messages, llm.Message{Role: "system", Content: memoryText})
-		}
-
-		if p.store != nil {
-			if dataText := p.groupDataContext(e); dataText != "" {
-				messages = append(messages, llm.Message{Role: "system", Content: dataText})
-			}
-		}
-	}
-
-	recent := p.mem.Recent(e, 12)
-	if len(recent) == 0 {
-		messages = append(messages, llm.Message{Role: "user", Content: currentMessage})
-		return messages
-	}
-
-	for _, entry := range recent {
-		content := cleanMessage(entry.Content)
-		if content == "" {
-			continue
-		}
-		switch entry.Role {
-		case "assistant":
-			messages = append(messages, llm.Message{Role: "assistant", Content: content})
-		default:
-			if e.Type == plugin.EventGroupMessage && entry.SenderName != "" {
-				content = entry.SenderName + ": " + content
-			}
-			messages = append(messages, llm.Message{Role: "user", Content: content})
-		}
-	}
-
-	return messages
-}
-
-func cleanMessage(s string) string {
-	s = cqAtRegex.ReplaceAllString(s, "")
-	return strings.TrimSpace(s)
-}
-
-var aiPhraseReplacer = strings.NewReplacer(
-	"作为一名AI", "我",
-	"作为一个AI助手", "我",
-	"作为一个AI", "我",
-	"作为AI", "我",
-	"祝你", "",
-	"希望你能", "",
-	"如果还有其他问题", "",
-	"随时可以问我", "",
-	"总的来说", "",
-	"综上所述", "",
-)
 
 // polishReply 用一次轻量 LLM 调用把回复压缩到 max 字以内，并保持口语化。
 func (p *ChatPlugin) polishReply(ctx context.Context, reply string) string {
@@ -574,65 +405,25 @@ func (p *ChatPlugin) polishReply(ctx context.Context, reply string) string {
 		}
 		return reply
 	}
-	out = postprocessReply(out)
-	out, _ = smartTruncate(out, 7)
+	out = corechat.PostprocessReply(out)
+	out, _ = corechat.SmartTruncate(out, 7)
 	return out
 }
 
-// smartTruncate 智能截断：
-//   - 长度未超限：直接返回，不需要二次润色
-//   - 超限时优先在句末标点、其次在逗号/顿号处截断
-//   - 如果 max 字以内没有任何自然断点，返回 true 表示需要二次 LLM 润色
-func smartTruncate(s string, max int) (string, bool) {
-	s = strings.TrimSpace(s)
-	runes := []rune(s)
-	if len(runes) <= max {
-		return s, false
-	}
+// 以下薄包装保留给现有测试与外部调用方，核心实现位于 internal/core/chat。
 
-	// 优先找 max 之前的句末标点
-	for i := max - 1; i >= 0; i-- {
-		if isSentenceEnd(runes[i]) {
-			return strings.TrimSpace(string(runes[:i+1])), false
-		}
-	}
-	// 其次找 max 之前的逗号/顿号/分号/冒号
-	for i := max - 1; i >= 0; i-- {
-		if isClauseBreak(runes[i]) {
-			return strings.TrimSpace(string(runes[:i])), false
-		}
-	}
-
-	// 没有任何自然断点：不要硬切，交给二次 LLM 润色
-	return strings.TrimSpace(string(runes[:max])), true
-}
-
-func isSentenceEnd(r rune) bool {
-	return strings.ContainsRune("。！？…\n", r)
-}
-
-func isClauseBreak(r rune) bool {
-	return strings.ContainsRune("，、；：,;: ", r)
-}
-
-// postprocessReply 做轻量拟人化清理，减少“机器感”。
 func postprocessReply(s string) string {
-	s = strings.TrimSpace(s)
-	s = aiPhraseReplacer.Replace(s)
-	s = strings.TrimSpace(s)
+	return corechat.PostprocessReply(s)
+}
 
-	lines := strings.Split(s, "\n")
-	for i, line := range lines {
-		line = strings.TrimSpace(line)
-		line = bulletRegex.ReplaceAllString(line, "")
-		line = numberedRegex.ReplaceAllString(line, "")
-		lines[i] = line
-	}
-	s = strings.Join(lines, "\n")
-	s = strings.TrimSpace(s)
+func smartTruncate(s string, max int) (string, bool) {
+	return corechat.SmartTruncate(s, max)
+}
 
-	for strings.Contains(s, "\n\n\n") {
-		s = strings.ReplaceAll(s, "\n\n\n", "\n\n")
-	}
-	return s
+func naturalParts(reply string) []string {
+	return corechat.NaturalParts(reply)
+}
+
+func cleanMessage(s string) string {
+	return corechat.CleanMessage(s)
 }

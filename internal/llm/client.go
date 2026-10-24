@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"icarosu/internal/obs"
 )
 
 // Config 是 OpenAI 兼容 API 客户端的配置。
@@ -105,11 +107,22 @@ type chatResponse struct {
 	} `json:"error"`
 }
 
+// Option 用于配置 Client。
+type Option func(*Client)
+
+// WithMetrics 设置外部指标收集器。
+func WithMetrics(m *obs.Metrics) Option {
+	return func(c *Client) {
+		c.metrics = m
+	}
+}
+
 // Client 是一个轻量 OpenAI 兼容 Chat Completions 客户端。
 type Client struct {
-	config Config
-	http   *http.Client
-	logger *slog.Logger
+	config  Config
+	http    *http.Client
+	logger  *slog.Logger
+	metrics *obs.Metrics
 
 	requests atomic.Int64
 	tokens   atomic.Int64
@@ -132,7 +145,7 @@ func (c *Client) Stats() Stats {
 	}
 }
 
-func NewClient(cfg Config, logger *slog.Logger) *Client {
+func NewClient(cfg Config, logger *slog.Logger, opts ...Option) *Client {
 	timeout := cfg.Timeout
 	if timeout <= 0 {
 		timeout = 30 * time.Second
@@ -141,11 +154,15 @@ func NewClient(cfg Config, logger *slog.Logger) *Client {
 		logger = slog.Default()
 	}
 
-	return &Client{
+	c := &Client{
 		config: cfg,
 		http:   &http.Client{Timeout: timeout},
 		logger: logger,
 	}
+	for _, opt := range opts {
+		opt(c)
+	}
+	return c
 }
 
 // UpdateConfig 热更新客户端配置（超时、模型、密钥等）。
@@ -257,9 +274,15 @@ func shouldRetryLLM(err error) bool {
 // Complete 发送一次请求，返回包含思考过程、文本和工具调用的完整响应。
 func (c *Client) Complete(ctx context.Context, messages []Message, tools []Tool) (resp *Response, err error) {
 	c.requests.Add(1)
+	if c.metrics != nil {
+		c.metrics.IncLLMRequests()
+	}
 	defer func() {
 		if err != nil {
 			c.errors.Add(1)
+			if c.metrics != nil {
+				c.metrics.IncLLMErrors()
+			}
 		}
 	}()
 

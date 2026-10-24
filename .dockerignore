@@ -1,0 +1,9 @@
+.git
+.go
+data
+MaiBot
+configs/config.yaml
+configs/config.yaml.bak
+configs/llm.local.yaml
+*.test
+*.out

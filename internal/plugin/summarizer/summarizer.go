@@ -3,10 +3,8 @@ package summarizer
 import (
 	"context"
 	"log/slog"
-	"strings"
-	"sync"
-	"time"
 
+	coresummarizer "icarosu/internal/core/summarizer"
 	"icarosu/internal/config"
 	"icarosu/internal/llm"
 	"icarosu/internal/memory"
@@ -16,18 +14,10 @@ import (
 )
 
 // SummarizerPlugin 定期或在消息量达到阈值时总结群聊，写入长期记忆。
+// 核心逻辑已下沉到 internal/core/summarizer。
 type SummarizerPlugin struct {
 	plugin.BasePlugin
-	client   *llm.Client
-	mem      *memory.Memory
-	store    *store.Store
-	semantic *semantic.Service
-	cfg      config.MemoryConfig
-	logger   *slog.Logger
-
-	mu          sync.Mutex
-	counts      map[int64]int
-	lastSummary map[int64]time.Time
+	svc *coresummarizer.Service
 }
 
 // Option 用于配置 SummarizerPlugin。
@@ -36,27 +26,24 @@ type Option func(*SummarizerPlugin)
 // WithLogger 设置日志器。
 func WithLogger(logger *slog.Logger) Option {
 	return func(p *SummarizerPlugin) {
-		p.logger = logger
+		if p.svc != nil {
+			coresummarizer.WithLogger(logger)(p.svc)
+		}
 	}
 }
 
 // WithSemantic 设置语义记忆服务。
 func WithSemantic(svc *semantic.Service) Option {
 	return func(p *SummarizerPlugin) {
-		p.semantic = svc
+		if p.svc != nil {
+			coresummarizer.WithSemantic(svc)(p.svc)
+		}
 	}
 }
 
-func New(client *llm.Client, mem *memory.Memory, st *store.Store, cfg config.MemoryConfig, opts ...Option) *SummarizerPlugin {
-	p := &SummarizerPlugin{
-		client:      client,
-		mem:         mem,
-		store:       st,
-		cfg:         cfg,
-		logger:      slog.Default(),
-		counts:      make(map[int64]int),
-		lastSummary: make(map[int64]time.Time),
-	}
+func New(client llm.Provider, mem *memory.Memory, st store.SummaryStore, cfg config.MemoryConfig, opts ...Option) *SummarizerPlugin {
+	p := &SummarizerPlugin{}
+	p.svc = coresummarizer.New(client, st, cfg)
 	for _, opt := range opts {
 		opt(p)
 	}
@@ -80,88 +67,15 @@ func (p *SummarizerPlugin) Stage() plugin.Stage {
 }
 
 func (p *SummarizerPlugin) Handle(ctx context.Context, _ plugin.Bot, e *plugin.Event) bool {
-	if e.Type != plugin.EventGroupMessage {
-		return false
-	}
-	if p.client == nil || p.store == nil {
-		return false
-	}
-
-	p.mu.Lock()
-	p.counts[e.GroupID]++
-	count := p.counts[e.GroupID]
-	last := p.lastSummary[e.GroupID]
-	threshold := p.cfg.SummaryThreshold
-	if threshold <= 0 {
-		threshold = 50
-	}
-	interval := time.Duration(p.cfg.SummaryIntervalMinutes) * time.Minute
-	if interval <= 0 {
-		interval = 60 * time.Minute
-	}
-	should := count >= threshold || (!last.IsZero() && time.Since(last) >= interval)
-	p.mu.Unlock()
-
-	if should {
-		p.summarize(ctx, e.GroupID)
+	if p.svc != nil {
+		p.svc.Observe(ctx, plugin.ToDomainMessage(e))
 	}
 	return false
 }
 
 // SummarizeGroup 手动触发一次群总结。
 func (p *SummarizerPlugin) SummarizeGroup(ctx context.Context, groupID int64) {
-	p.summarize(ctx, groupID)
-}
-
-func (p *SummarizerPlugin) summarize(ctx context.Context, groupID int64) {
-	records, err := p.store.RecentMessages(groupID, 30)
-	if err != nil || len(records) == 0 {
-		return
-	}
-
-	var b strings.Builder
-	for _, r := range records {
-		name := r.SenderName
-		if name == "" {
-			name = "用户"
-		}
-		b.WriteString(name)
-		b.WriteString(": ")
-		b.WriteString(r.Content)
-		b.WriteString("\n")
-	}
-
-	messages := []llm.Message{
-		{Role: "system", Content: "你是群聊总结助手。请用简洁的中文总结这段群聊的核心话题、关键信息和人物关系，不超过200字。"},
-		{Role: "user", Content: b.String()},
-	}
-	summary, err := p.client.Chat(ctx, messages)
-	if err != nil {
-		if p.logger != nil {
-			p.logger.Warn("summarize failed", "group_id", groupID, "error", err)
-		}
-		return
-	}
-
-	var saveErr error
-	if p.semantic != nil {
-		saveErr = p.semantic.SaveMemory(ctx, groupID, 0, summary)
-	} else {
-		saveErr = p.store.SaveMemory(groupID, 0, summary)
-	}
-	if saveErr != nil {
-		if p.logger != nil {
-			p.logger.Warn("save summary failed", "group_id", groupID, "error", saveErr)
-		}
-		return
-	}
-
-	p.mu.Lock()
-	p.counts[groupID] = 0
-	p.lastSummary[groupID] = time.Now()
-	p.mu.Unlock()
-
-	if p.logger != nil {
-		p.logger.Info("group summarized", "group_id", groupID, "summary", summary)
+	if p.svc != nil {
+		p.svc.SummarizeGroup(ctx, groupID)
 	}
 }

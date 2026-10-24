@@ -106,28 +106,50 @@ func (m *Manager) Stop(ctx context.Context) error {
 }
 
 // Dispatch 按流水线阶段分发事件：
-//  1. 先执行所有 Preprocessor；
-//  2. 再执行所有 Responder，某个插件返回 true 时停止；
+//  1. 先执行所有 Preprocessor，某个插件返回 true 时整体停止；
+//  2. 再执行所有 Responder，某个插件返回 true 时停止后续 Responder，
+//     但仍继续执行 Postprocessor；
 //  3. 最后执行所有 Postprocessor。
 //
 // 每个阶段内部仍按 Priority 从高到低执行。
+// 插件可实现 ContextualPlugin 来读写流水线中间产物 Context.Data。
 func (m *Manager) Dispatch(ctx context.Context, bot Bot, e *Event) {
 	m.mu.RLock()
 	plugins := m.enabledPluginsLocked()
 	m.mu.RUnlock()
 
 	sortPlugins(plugins)
+	pc := NewContext(e)
 
 	for _, stage := range []Stage{StagePreprocessor, StageResponder, StagePostprocessor} {
+		if stage == StageResponder {
+			for _, p := range plugins {
+				if p.Stage() != stage {
+					continue
+				}
+				if m.handlePlugin(ctx, bot, p, e, pc) {
+					break
+				}
+			}
+			continue
+		}
+
 		for _, p := range plugins {
 			if p.Stage() != stage {
 				continue
 			}
-			if p.Handle(ctx, bot, e) {
+			if m.handlePlugin(ctx, bot, p, e, pc) {
 				return
 			}
 		}
 	}
+}
+
+func (m *Manager) handlePlugin(ctx context.Context, bot Bot, p Plugin, e *Event, pc *Context) bool {
+	if cp, ok := p.(ContextualPlugin); ok {
+		return cp.HandleContext(ctx, bot, pc)
+	}
+	return p.Handle(ctx, bot, e)
 }
 
 // Plugins 返回当前已注册的插件列表（按优先级排序）。

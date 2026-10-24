@@ -12,11 +12,23 @@ import (
 	"icarosu/internal/style"
 )
 
+// GroupScope 是表达方式互通组解析能力。
+type GroupScope interface {
+	ExpressionGroupIDs(groupID int64) []int64
+}
+
+// ExpressionSaver 是表达方式持久化能力。
+type ExpressionSaver interface {
+	SaveStyleExpression(groupID int64, tags []string, expression string) error
+}
+
 // StyleLearnPlugin 随机采样消息，让 LLM 判断是否值得收入表达方式库。
 type StyleLearnPlugin struct {
 	plugin.BasePlugin
-	client *llm.Client
+	client llm.Provider
 	lib    *style.Library
+	scope  GroupScope
+	saver  ExpressionSaver
 	logger *slog.Logger
 }
 
@@ -30,7 +42,21 @@ func WithLogger(logger *slog.Logger) Option {
 	}
 }
 
-func New(client *llm.Client, lib *style.Library, opts ...Option) plugin.Plugin {
+// WithGroupScope 设置表达方式互通组解析器。
+func WithGroupScope(sc GroupScope) Option {
+	return func(p *StyleLearnPlugin) {
+		p.scope = sc
+	}
+}
+
+// WithSaver 设置表达方式持久化器。
+func WithSaver(saver ExpressionSaver) Option {
+	return func(p *StyleLearnPlugin) {
+		p.saver = saver
+	}
+}
+
+func New(client llm.Provider, lib *style.Library, opts ...Option) plugin.Plugin {
 	p := &StyleLearnPlugin{
 		client: client,
 		lib:    lib,
@@ -79,9 +105,18 @@ func (p *StyleLearnPlugin) Handle(ctx context.Context, _ plugin.Bot, e *plugin.E
 		return false
 	}
 
-	p.lib.Add(result.Tags, result.Expression)
+	groupIDs := []int64{e.GroupID}
+	if p.scope != nil {
+		groupIDs = p.scope.ExpressionGroupIDs(e.GroupID)
+	}
+	p.lib.AddForGroups(groupIDs, result.Tags, result.Expression)
+	if p.saver != nil {
+		for _, gid := range groupIDs {
+			_ = p.saver.SaveStyleExpression(gid, result.Tags, result.Expression)
+		}
+	}
 	if p.logger != nil {
-		p.logger.Info("learned expression", "expression", result.Expression, "tags", result.Tags)
+		p.logger.Info("learned expression", "expression", result.Expression, "tags", result.Tags, "group_ids", groupIDs)
 	}
 	return false
 }

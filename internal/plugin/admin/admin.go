@@ -17,7 +17,7 @@ type AdminPlugin struct {
 	plugin.BasePlugin
 	adminIDs  []int64
 	mem       *memory.Memory
-	store     *store.Store
+	store     store.AdminStore
 	attention *attention.Tracker
 	logger    *slog.Logger
 }
@@ -32,7 +32,7 @@ func WithLogger(logger *slog.Logger) Option {
 	}
 }
 
-func New(adminIDs []int64, mem *memory.Memory, st *store.Store, at *attention.Tracker, opts ...Option) plugin.Plugin {
+func New(adminIDs []int64, mem *memory.Memory, st store.AdminStore, at *attention.Tracker, opts ...Option) plugin.Plugin {
 	p := &AdminPlugin{
 		adminIDs:  adminIDs,
 		mem:       mem,

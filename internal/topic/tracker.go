@@ -27,14 +27,14 @@ type Tracker struct {
 	embedder  semantic.Embedder
 	threshold float64
 	states    map[int64]*State
-	store     *store.Store
+	store     store.TopicRepository
 }
 
 // Option 用于配置 Tracker。
 type Option func(*Tracker)
 
 // WithStore 设置持久化存储，话题状态会保存到 SQLite。
-func WithStore(st *store.Store) Option {
+func WithStore(st store.TopicRepository) Option {
 	return func(t *Tracker) {
 		t.store = st
 	}

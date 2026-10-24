@@ -1,0 +1,13 @@
+services:
+  icarosu:
+    build: .
+    container_name: icarosu
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./configs:/app/configs
+      - ./data:/app/data
+    environment:
+      - TZ=Asia/Shanghai
+    command: ["-config", "/app/configs/config.yaml"]

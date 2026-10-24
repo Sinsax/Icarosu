@@ -2,16 +2,10 @@ package webui
 
 import (
 	"encoding/json"
-	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
-	"os"
-	"strconv"
 	"strings"
 	"time"
-
-	"gopkg.in/yaml.v3"
 
 	"icarosu/internal/attention"
 	"icarosu/internal/config"
@@ -24,12 +18,12 @@ import (
 	"icarosu/internal/store"
 )
 
-// Server 提供本地 WebUI，用于查看/编辑配置、热重载和查看日志。
+// Server 鎻愪緵鏈湴 WebUI锛岀敤浜庢煡鐪?缂栬緫閰嶇疆銆佺儹閲嶈浇鍜屾煡鐪嬫棩蹇椼€?
 type Server struct {
 	manager   *config.Manager
 	logger    *slog.Logger
 	logs      *logger.Buffer
-	store      *store.Store
+	store      store.FullStore
 	attention  *attention.Tracker
 	llm        *llm.Client
 	memes      *meme.Store
@@ -42,66 +36,66 @@ type Server struct {
 	handler    http.Handler
 }
 
-// Option 用于配置 WebUI。
+// Option 鐢ㄤ簬閰嶇疆 WebUI銆?
 type Option func(*Server)
 
-// WithLogBuffer 设置日志查看用的内存缓冲。
+// WithLogBuffer 璁剧疆鏃ュ織鏌ョ湅鐢ㄧ殑鍐呭瓨缂撳啿銆?
 func WithLogBuffer(buf *logger.Buffer) Option {
 	return func(s *Server) {
 		s.logs = buf
 	}
 }
 
-// WithStore 设置长期存储，用于状态面板统计。
-func WithStore(st *store.Store) Option {
+// WithStore 璁剧疆闀挎湡瀛樺偍锛岀敤浜庣姸鎬侀潰鏉跨粺璁°€?
+func WithStore(st store.FullStore) Option {
 	return func(s *Server) {
 		s.store = st
 	}
 }
 
-// WithAttention 设置注意力系统，用于状态面板展示。
+// WithAttention 璁剧疆娉ㄦ剰鍔涚郴缁燂紝鐢ㄤ簬鐘舵€侀潰鏉垮睍绀恒€?
 func WithAttention(at *attention.Tracker) Option {
 	return func(s *Server) {
 		s.attention = at
 	}
 }
 
-// WithLLM 设置 LLM 客户端，用于状态面板展示调用统计。
+// WithLLM 璁剧疆 LLM 瀹㈡埛绔紝鐢ㄤ簬鐘舵€侀潰鏉垮睍绀鸿皟鐢ㄧ粺璁°€?
 func WithLLM(client *llm.Client) Option {
 	return func(s *Server) {
 		s.llm = client
 	}
 }
 
-// WithMemeStore 设置表情包库，用于表情管理页面。
+// WithMemeStore 璁剧疆琛ㄦ儏鍖呭簱锛岀敤浜庤〃鎯呯鐞嗛〉闈€?
 func WithMemeStore(ms *meme.Store) Option {
 	return func(s *Server) {
 		s.memes = ms
 	}
 }
 
-// WithPluginManager 设置插件管理器，用于插件热开关页面。
+// WithPluginManager 璁剧疆鎻掍欢绠＄悊鍣紝鐢ㄤ簬鎻掍欢鐑紑鍏抽〉闈€?
 func WithPluginManager(pm *plugin.Manager) Option {
 	return func(s *Server) {
 		s.plugins = pm
 	}
 }
 
-// WithMemory 设置短期记忆，用于管理操作。
+// WithMemory 璁剧疆鐭湡璁板繂锛岀敤浜庣鐞嗘搷浣溿€?
 func WithMemory(mem *memory.Memory) Option {
 	return func(s *Server) {
 		s.mem = mem
 	}
 }
 
-// WithSummarizer 设置总结插件，用于手动触发总结。
+// WithSummarizer 璁剧疆鎬荤粨鎻掍欢锛岀敤浜庢墜鍔ㄨЕ鍙戞€荤粨銆?
 func WithSummarizer(sm *summarizer.SummarizerPlugin) Option {
 	return func(s *Server) {
 		s.summarizer = sm
 	}
 }
 
-// WithBot 设置机器人发送能力，用于发送测试消息。
+// WithBot 璁剧疆鏈哄櫒浜哄彂閫佽兘鍔涳紝鐢ㄤ簬鍙戦€佹祴璇曟秷鎭€?
 func WithBot(b plugin.Bot) Option {
 	return func(s *Server) {
 		s.bot = b
@@ -138,6 +132,9 @@ func New(manager *config.Manager, logger *slog.Logger, opts ...Option) *Server {
 	mux.HandleFunc("/api/admin/clear", s.handleAdminClear)
 	mux.HandleFunc("/api/admin/summarize", s.handleAdminSummarize)
 	mux.HandleFunc("/api/admin/send", s.handleAdminSend)
+	mux.HandleFunc("/api/groups/styles", s.handleGroupStyles)
+	mux.HandleFunc("/api/groups/jargons", s.handleGroupJargons)
+	mux.HandleFunc("/api/groups/profiles", s.handleGroupProfiles)
 	s.handler = s.auth(mux)
 	s.http = &http.Server{
 		Addr:              manager.Get().WebUI.Addr,
@@ -147,12 +144,12 @@ func New(manager *config.Manager, logger *slog.Logger, opts ...Option) *Server {
 	return s
 }
 
-// Handler 返回 HTTP 路由，便于测试或嵌入其他服务。
+// Handler 杩斿洖 HTTP 璺敱锛屼究浜庢祴璇曟垨宓屽叆鍏朵粬鏈嶅姟銆?
 func (s *Server) Handler() http.Handler {
 	return s.handler
 }
 
-// Start 在后台启动 HTTP 服务。
+// Start 鍦ㄥ悗鍙板惎鍔?HTTP 鏈嶅姟銆?
 func (s *Server) Start() error {
 	addr := s.manager.Get().WebUI.Addr
 	if addr == "" {
@@ -168,7 +165,7 @@ func (s *Server) Start() error {
 	return nil
 }
 
-// Close 关闭 HTTP 服务。
+// Close 鍏抽棴 HTTP 鏈嶅姟銆?
 func (s *Server) Close() error {
 	if s.http == nil {
 		return nil
@@ -176,8 +173,8 @@ func (s *Server) Close() error {
 	return s.http.Close()
 }
 
-// auth 保护所有 /api 接口；配置了 token 时未授权请求返回 401。
-// 首页 / 保持可访问，前端会提示输入令牌。
+// auth 淇濇姢鎵€鏈?/api 鎺ュ彛锛涢厤缃簡 token 鏃舵湭鎺堟潈璇锋眰杩斿洖 401銆?
+// 棣栭〉 / 淇濇寔鍙闂紝鍓嶇浼氭彁绀鸿緭鍏ヤ护鐗屻€?
 func (s *Server) auth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/" || r.URL.Path == "/healthz" || r.URL.Path == "/metrics" {
@@ -211,1191 +208,9 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte(indexHTML))
 }
 
-func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodGet:
-		s.writeJSON(w, s.manager.Get())
-	case http.MethodPost, http.MethodPut:
-		var cfg config.Config
-		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&cfg); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		if cfg.Version == 0 {
-			cfg.Version = config.CurrentVersion
-		}
-		if cfg.LLMConfigFile == "" {
-			cfg.LLMConfigFile = s.manager.Get().LLMConfigFile
-		}
-
-		path := s.manager.Path()
-		old, _ := os.ReadFile(path)
-		var oldLLM []byte
-		llmPath := ""
-		if cfg.LLMConfigFile != "" {
-			llmPath = config.ProviderPath(path, cfg.LLMConfigFile)
-			oldLLM, _ = os.ReadFile(llmPath)
-		}
-
-		if err := config.WriteSplit(&cfg, path); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		if err := s.manager.Reload(); err != nil {
-			_ = os.WriteFile(path, old, 0o644)
-			if llmPath != "" && oldLLM != nil {
-				_ = os.WriteFile(llmPath, oldLLM, 0o644)
-			}
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		s.logger.Info("config updated via webui form")
-		s.writeJSON(w, map[string]any{
-			"ok":     true,
-			"config": s.manager.Get(),
-		})
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-	}
-}
-
-func (s *Server) handleConfigRaw(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodGet:
-		data, err := os.ReadFile(s.manager.Path())
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		_, _ = w.Write(data)
-	case http.MethodPost:
-		body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		if strings.TrimSpace(string(body)) == "" {
-			http.Error(w, "config cannot be empty", http.StatusBadRequest)
-			return
-		}
-
-		var cfg config.Config
-		if err := yaml.Unmarshal(body, &cfg); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		if cfg.Version == 0 {
-			cfg.Version = config.CurrentVersion
-		}
-		if cfg.LLMConfigFile == "" {
-			cfg.LLMConfigFile = s.manager.Get().LLMConfigFile
-		}
-
-		path := s.manager.Path()
-		old, _ := os.ReadFile(path)
-		var oldLLM []byte
-		llmPath := ""
-		if cfg.LLMConfigFile != "" {
-			llmPath = config.ProviderPath(path, cfg.LLMConfigFile)
-			oldLLM, _ = os.ReadFile(llmPath)
-		}
-
-		if err := config.WriteSplit(&cfg, path); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		if err := s.manager.Reload(); err != nil {
-			_ = os.WriteFile(path, old, 0o644)
-			if llmPath != "" && oldLLM != nil {
-				_ = os.WriteFile(llmPath, oldLLM, 0o644)
-			}
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		s.logger.Info("config updated and reloaded via webui")
-		s.writeJSON(w, map[string]any{
-			"ok":     true,
-			"config": s.manager.Get(),
-		})
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-	}
-}
-
-func (s *Server) handleReload(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	if err := s.manager.Reload(); err != nil {
-		s.logger.Warn("config reload failed", "error", err)
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	s.logger.Info("config reloaded via webui")
-	s.writeJSON(w, map[string]any{
-		"ok":     true,
-		"config": s.manager.Get(),
-	})
-}
-
-func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	_, _ = w.Write([]byte(`{"status":"ok"}`))
-}
-
-func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
-	_, _ = fmt.Fprintf(w, "bot_uptime_seconds %d\n", int64(time.Since(s.startedAt).Seconds()))
-	_, _ = fmt.Fprintf(w, "bot_info{addr=%q,auth_enabled=%t} 1\n", s.manager.Get().WebUI.Addr, s.manager.Get().WebUI.Token != "")
-	if s.llm != nil {
-		stats := s.llm.Stats()
-		_, _ = fmt.Fprintf(w, "llm_requests_total %d\n", stats.Requests)
-		_, _ = fmt.Fprintf(w, "llm_tokens_total %d\n", stats.Tokens)
-		_, _ = fmt.Fprintf(w, "llm_errors_total %d\n", stats.Errors)
-	}
-	if s.store != nil {
-		if n, err := s.store.CountMessages(); err == nil {
-			_, _ = fmt.Fprintf(w, "messages_total %d\n", n)
-		}
-		if n, err := s.store.CountMemories(); err == nil {
-			_, _ = fmt.Fprintf(w, "memories_total %d\n", n)
-		}
-		if n, err := s.store.CountMembers(); err == nil {
-			_, _ = fmt.Fprintf(w, "members_total %d\n", n)
-		}
-		if groups, err := s.store.GroupIDs(); err == nil {
-			_, _ = fmt.Fprintf(w, "groups_total %d\n", len(groups))
-		}
-	}
-}
-
-func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	status := map[string]any{
-		"running":      true,
-		"dry_run":      s.manager.Get().DryRun,
-		"webui_addr":   s.manager.Get().WebUI.Addr,
-		"auth_enabled": s.manager.Get().WebUI.Token != "",
-	}
-	if s.store != nil {
-		groups, _ := s.store.GroupIDs()
-		messages, _ := s.store.CountMessages()
-		memories, _ := s.store.CountMemories()
-		members, _ := s.store.CountMembers()
-		status["group_ids"] = groups
-		status["groups"] = len(groups)
-		status["messages"] = messages
-		status["memories"] = memories
-		status["members"] = members
-	}
-	if s.attention != nil {
-		status["attention"] = s.attention.Scores()
-	}
-	if s.llm != nil {
-		status["llm"] = s.llm.Stats()
-	}
-	s.writeJSON(w, status)
-}
-
-func (s *Server) handleMemories(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	if s.store == nil {
-		s.writeJSON(w, map[string]any{"memories": []store.MemoryRecord{}})
-		return
-	}
-	limit := 50
-	offset := 0
-	if v := r.URL.Query().Get("limit"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			limit = n
-		}
-	}
-	if v := r.URL.Query().Get("offset"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
-			offset = n
-		}
-	}
-	q := strings.TrimSpace(r.URL.Query().Get("q"))
-	if q != "" {
-		memories, err := s.store.SearchMemoriesText(q, limit)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		s.writeJSON(w, map[string]any{"memories": memories})
-		return
-	}
-	memories, err := s.store.ListMemories(limit, offset)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	s.writeJSON(w, map[string]any{"memories": memories})
-}
-
-func (s *Server) handleMemoryDelete(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	if s.store == nil {
-		http.Error(w, "store not enabled", http.StatusBadRequest)
-		return
-	}
-	var req struct {
-		ID int64 `json:"id"`
-	}
-	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	if err := s.store.DeleteMemory(req.ID); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	s.writeJSON(w, map[string]any{"ok": true})
-}
-
-func (s *Server) handleMemes(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	if s.memes == nil {
-		s.writeJSON(w, map[string]any{"memes": []string{}})
-		return
-	}
-	s.writeJSON(w, map[string]any{"memes": s.memes.List()})
-}
-
-func (s *Server) handleMemeAdd(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	if s.memes == nil {
-		http.Error(w, "meme store not enabled", http.StatusBadRequest)
-		return
-	}
-	var req struct {
-		URL string `json:"url"`
-	}
-	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	path, err := s.memes.SaveFromURL(r.Context(), req.URL)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	s.writeJSON(w, map[string]any{"ok": true, "path": path})
-}
-
-func (s *Server) handleMemeDelete(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	if s.memes == nil {
-		http.Error(w, "meme store not enabled", http.StatusBadRequest)
-		return
-	}
-	var req struct {
-		Path string `json:"path"`
-	}
-	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	if err := s.memes.Delete(req.Path); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	s.writeJSON(w, map[string]any{"ok": true})
-}
-
-func (s *Server) handleMemeFile(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	if s.memes == nil {
-		http.Error(w, "meme store not enabled", http.StatusBadRequest)
-		return
-	}
-	path := r.URL.Query().Get("path")
-	resolved, err := s.memes.Resolve(path)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	http.ServeFile(w, r, resolved)
-}
-
-func (s *Server) handlePlugins(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	if s.plugins == nil {
-		s.writeJSON(w, map[string]any{"plugins": []plugin.PluginState{}})
-		return
-	}
-	s.writeJSON(w, map[string]any{"plugins": s.plugins.States()})
-}
-
-func (s *Server) handlePluginToggle(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	if s.plugins == nil {
-		http.Error(w, "plugin manager not enabled", http.StatusBadRequest)
-		return
-	}
-	var req struct {
-		Name    string `json:"name"`
-		Enabled bool   `json:"enabled"`
-	}
-	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	s.plugins.SetEnabled(req.Name, req.Enabled)
-	s.logger.Info("plugin toggled", "name", req.Name, "enabled", req.Enabled)
-	s.writeJSON(w, map[string]any{"ok": true})
-}
-
-func (s *Server) handleAdminClear(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	if s.mem == nil {
-		http.Error(w, "memory not enabled", http.StatusBadRequest)
-		return
-	}
-	var req struct {
-		GroupID int64 `json:"group_id"`
-		UserID  int64 `json:"user_id"`
-	}
-	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	key := req.GroupID
-	if key == 0 {
-		key = req.UserID
-	}
-	if key == 0 {
-		http.Error(w, "group_id or user_id required", http.StatusBadRequest)
-		return
-	}
-	s.mem.ClearKey(key)
-	s.writeJSON(w, map[string]any{"ok": true})
-}
-
-func (s *Server) handleAdminSummarize(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	if s.summarizer == nil {
-		http.Error(w, "summarizer not enabled", http.StatusBadRequest)
-		return
-	}
-	var req struct {
-		GroupID int64 `json:"group_id"`
-	}
-	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	if req.GroupID == 0 {
-		http.Error(w, "group_id required", http.StatusBadRequest)
-		return
-	}
-	s.summarizer.SummarizeGroup(r.Context(), req.GroupID)
-	s.writeJSON(w, map[string]any{"ok": true})
-}
-
-func (s *Server) handleAdminSend(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	if s.bot == nil {
-		http.Error(w, "bot not enabled", http.StatusBadRequest)
-		return
-	}
-	var req struct {
-		GroupID int64  `json:"group_id"`
-		UserID  int64  `json:"user_id"`
-		Message string `json:"message"`
-	}
-	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	if req.Message == "" {
-		http.Error(w, "message required", http.StatusBadRequest)
-		return
-	}
-	var err error
-	if req.GroupID != 0 {
-		err = s.bot.SendGroupMessage(r.Context(), req.GroupID, req.Message)
-	} else if req.UserID != 0 {
-		err = s.bot.SendPrivateMessage(r.Context(), req.UserID, req.Message)
-	} else {
-		http.Error(w, "group_id or user_id required", http.StatusBadRequest)
-		return
-	}
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	s.writeJSON(w, map[string]any{"ok": true})
-}
-
-func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	limit := 200
-	if v := r.URL.Query().Get("limit"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			limit = n
-		}
-	}
-	if s.logs == nil {
-		s.writeJSON(w, map[string]any{"logs": []string{}})
-		return
-	}
-	s.writeJSON(w, map[string]any{"logs": s.logs.Recent(limit)})
-}
-
-func (s *Server) handleLogStream(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	if s.logs == nil {
-		http.Error(w, "log buffer not enabled", http.StatusServiceUnavailable)
-		return
-	}
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-
-	ch, cancel := s.logs.Subscribe()
-	defer cancel()
-
-	ticker := time.NewTicker(15 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-r.Context().Done():
-			return
-		case line := <-ch:
-			line = strings.ReplaceAll(line, "\n", " ")
-			_, _ = fmt.Fprintf(w, "data: %s\n\n", line)
-			flusher.Flush()
-		case <-ticker.C:
-			_, _ = fmt.Fprint(w, ": ping\n\n")
-			flusher.Flush()
-		}
-	}
-}
-
 func (s *Server) writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	if err := json.NewEncoder(w).Encode(v); err != nil {
 		s.logger.Warn("write json failed", "error", err)
 	}
 }
-
-const indexHTML = `<!doctype html>
-<html lang="zh">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Icarosu 控制面板</title>
-<style>
-:root {
-  --bg: #0f172a;
-  --card: #1e293b;
-  --card-2: #273549;
-  --text: #e2e8f0;
-  --muted: #94a3b8;
-  --accent: #38bdf8;
-  --accent-2: #818cf8;
-  --ok: #34d399;
-  --err: #f87171;
-  --border: #334155;
-  --radius: 14px;
-}
-* { box-sizing: border-box; }
-body {
-  margin: 0;
-  font-family: "Segoe UI", system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
-  background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 50%, #0f172a 100%);
-  color: var(--text);
-  min-height: 100vh;
-}
-.app { max-width: 1200px; margin: 0 auto; padding: 24px 16px 48px; }
-header {
-  display: flex; align-items: center; justify-content: space-between;
-  background: rgba(30,41,59,.72); backdrop-filter: blur(12px);
-  border: 1px solid var(--border); border-radius: var(--radius);
-  padding: 18px 24px; margin-bottom: 20px;
-  box-shadow: 0 8px 30px rgba(0,0,0,.25);
-}
-header h1 { margin: 0; font-size: 22px; background: linear-gradient(90deg, var(--accent), var(--accent-2)); -webkit-background-clip: text; background-clip: text; color: transparent; }
-.status { font-size: 13px; color: var(--muted); }
-.status .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--ok); margin-right: 6px; }
-nav.tabs { display: flex; gap: 8px; margin-bottom: 18px; }
-.tab {
-  border: 1px solid var(--border); background: var(--card); color: var(--muted);
-  padding: 10px 20px; border-radius: 999px; cursor: pointer; font-size: 14px; transition: .2s;
-}
-.tab:hover { color: var(--text); border-color: var(--accent); }
-.tab.active { background: linear-gradient(90deg, var(--accent), var(--accent-2)); color: #0f172a; font-weight: 600; border-color: transparent; }
-.card {
-  background: rgba(30,41,59,.78); backdrop-filter: blur(8px);
-  border: 1px solid var(--border); border-radius: var(--radius);
-  padding: 22px; box-shadow: 0 8px 30px rgba(0,0,0,.2);
-}
-.toolbar { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 18px; align-items: center; }
-.stats-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 14px; margin-bottom: 20px; }
-.stat-card {
-  background: rgba(15,23,42,.5); border: 1px solid var(--border); border-radius: 12px; padding: 16px;
-}
-.stat-card .label { font-size: 13px; color: var(--muted); margin-bottom: 6px; }
-.stat-card .value { font-size: 28px; font-weight: 700; color: var(--text); }
-.stat-card .sub { font-size: 12px; color: var(--muted); margin-top: 4px; word-break: break-all; }
-button {
-  border: 1px solid var(--border); background: var(--card-2); color: var(--text);
-  padding: 9px 16px; border-radius: 10px; cursor: pointer; font-size: 14px; transition: .2s;
-}
-button:hover { border-color: var(--accent); transform: translateY(-1px); }
-button.primary { background: linear-gradient(90deg, var(--accent), var(--accent-2)); color: #0f172a; font-weight: 600; border: none; }
-button.danger { background: rgba(248,113,113,.12); color: var(--err); }
-button.small { padding: 6px 12px; font-size: 13px; }
-.form-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
-fieldset {
-  border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; margin: 0;
-  background: rgba(15,23,42,.35); grid-column: 1 / -1;
-}
-legend { padding: 0 8px; font-size: 15px; font-weight: 600; color: var(--accent); }
-.field { display: flex; flex-direction: column; gap: 6px; }
-.field label { font-size: 13px; color: var(--muted); }
-.field input, .field select {
-  background: #0f172a; border: 1px solid var(--border); color: var(--text);
-  border-radius: 8px; padding: 9px 10px; font-size: 14px; outline: none; transition: .2s; width: 100%;
-}
-.field input:focus, .field select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(56,189,248,.15); }
-.field.check { flex-direction: row; align-items: center; gap: 10px; }
-.field.check input { width: 18px; height: 18px; accent-color: var(--accent); }
-.log-box {
-  background: #020617; border: 1px solid var(--border); border-radius: 12px;
-  padding: 16px; height: 60vh; overflow: auto; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 13px; line-height: 1.6; color: #cbd5e1; white-space: pre-wrap; word-break: break-all;
-}
-.toast {
-  position: fixed; top: 20px; right: 20px; z-index: 99; padding: 12px 18px; border-radius: 10px;
-  font-size: 14px; box-shadow: 0 8px 30px rgba(0,0,0,.3); opacity: 0; transform: translateY(-8px); transition: .25s; pointer-events: none;
-}
-.toast.show { opacity: 1; transform: translateY(0); }
-.toast.ok { background: #065f46; color: #d1fae5; border: 1px solid #10b981; }
-.toast.err { background: #7f1d1d; color: #fee2e2; border: 1px solid #ef4444; }
-.hidden { display: none; }
-</style>
-</head>
-<body>
-<div class="app">
-  <header>
-    <h1>⚡ Icarosu 控制面板</h1>
-    <div class="status"><span class="dot"></span>运行中</div>
-  </header>
-
-  <nav class="tabs">
-    <button class="tab active" id="tab-config" onclick="switchTab('config')">配置编辑</button>
-    <button class="tab" id="tab-status" onclick="switchTab('status')">状态</button>
-    <button class="tab" id="tab-memories" onclick="switchTab('memories')">记忆</button>
-    <button class="tab" id="tab-memes" onclick="switchTab('memes')">表情</button>
-    <button class="tab" id="tab-plugins" onclick="switchTab('plugins')">插件</button>
-    <button class="tab" id="tab-admin" onclick="switchTab('admin')">管理</button>
-    <button class="tab" id="tab-logs" onclick="switchTab('logs')">日志查看</button>
-  </nav>
-
-  <section id="panel-config" class="card">
-    <div class="toolbar">
-      <button class="primary" onclick="loadConfig()">刷新</button>
-      <button onclick="saveConfig()">保存并热重载</button>
-      <button onclick="reloadConfig()">仅热重载</button>
-      <span style="color:var(--muted); font-size:13px;">修改后记得保存</span>
-    </div>
-    <div id="configForm" class="form-grid">
-      <p style="color:var(--muted); grid-column:1/-1;">正在自动加载配置...</p>
-    </div>
-  </section>
-
-  <section id="panel-status" class="card hidden">
-    <div class="toolbar">
-      <button class="primary" onclick="loadStatus()">刷新状态</button>
-      <span style="color:var(--muted); font-size:13px;">每 5 秒自动刷新</span>
-    </div>
-    <div class="stats-grid" id="statusCards"></div>
-    <pre id="statusDetail" style="background:#020617; border:1px solid var(--border); border-radius:12px; padding:14px; color:#cbd5e1; font-size:13px; max-height:300px; overflow:auto;">加载中...</pre>
-  </section>
-
-  <section id="panel-memories" class="card hidden">
-    <div class="toolbar">
-      <input id="memorySearch" type="text" placeholder="搜索记忆内容..." style="background:#0f172a; border:1px solid var(--border); color:var(--text); border-radius:8px; padding:9px 12px; width:260px;">
-      <button class="primary" onclick="loadMemories()">搜索</button>
-      <button onclick="loadMemories()">刷新</button>
-      <span style="color:var(--muted); font-size:13px;">支持按内容模糊搜索</span>
-    </div>
-    <div style="overflow:auto;">
-      <table style="width:100%; border-collapse:collapse; font-size:14px;">
-        <thead>
-          <tr style="color:var(--muted); text-align:left;">
-            <th style="padding:8px; border-bottom:1px solid var(--border);">ID</th>
-            <th style="padding:8px; border-bottom:1px solid var(--border);">群</th>
-            <th style="padding:8px; border-bottom:1px solid var(--border);">用户</th>
-            <th style="padding:8px; border-bottom:1px solid var(--border);">内容</th>
-            <th style="padding:8px; border-bottom:1px solid var(--border);">时间</th>
-            <th style="padding:8px; border-bottom:1px solid var(--border);">操作</th>
-          </tr>
-        </thead>
-        <tbody id="memoriesTable"></tbody>
-      </table>
-    </div>
-  </section>
-
-  <section id="panel-memes" class="card hidden">
-    <div class="toolbar">
-      <input id="memeUrl" type="text" placeholder="图片 URL，添加表情包..." style="background:#0f172a; border:1px solid var(--border); color:var(--text); border-radius:8px; padding:9px 12px; width:360px;">
-      <button class="primary" onclick="addMeme()">添加</button>
-      <button onclick="loadMemes()">刷新</button>
-      <span style="color:var(--muted); font-size:13px;">点击图片可预览</span>
-    </div>
-    <div id="memeGrid" style="display:grid; grid-template-columns:repeat(auto-fill,minmax(140px,1fr)); gap:12px;"></div>
-  </section>
-
-  <section id="panel-plugins" class="card hidden">
-    <div class="toolbar">
-      <button class="primary" onclick="loadPlugins()">刷新插件</button>
-      <span style="color:var(--muted); font-size:13px;">热开关即时生效，无需重启</span>
-    </div>
-    <div style="overflow:auto;">
-      <table style="width:100%; border-collapse:collapse; font-size:14px;">
-        <thead>
-          <tr style="color:var(--muted); text-align:left;">
-            <th style="padding:8px; border-bottom:1px solid var(--border);">名称</th>
-            <th style="padding:8px; border-bottom:1px solid var(--border);">阶段</th>
-            <th style="padding:8px; border-bottom:1px solid var(--border);">优先级</th>
-            <th style="padding:8px; border-bottom:1px solid var(--border);">说明</th>
-            <th style="padding:8px; border-bottom:1px solid var(--border);">状态</th>
-            <th style="padding:8px; border-bottom:1px solid var(--border);">操作</th>
-          </tr>
-        </thead>
-        <tbody id="pluginsTable"></tbody>
-      </table>
-    </div>
-  </section>
-
-  <section id="panel-admin" class="card hidden">
-    <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:16px;">
-      <div style="background:rgba(15,23,42,.5); border:1px solid var(--border); border-radius:12px; padding:16px;">
-        <h3 style="margin-top:0;">清空短期上下文</h3>
-        <div class="field"><label>群 ID</label><input id="clearGroup" type="number" placeholder="群号"></div>
-        <div class="field"><label>用户 ID（私聊）</label><input id="clearUser" type="number" placeholder="QQ 号"></div>
-        <button class="danger" onclick="adminClear()" style="margin-top:12px;">清空</button>
-      </div>
-      <div style="background:rgba(15,23,42,.5); border:1px solid var(--border); border-radius:12px; padding:16px;">
-        <h3 style="margin-top:0;">手动触发群总结</h3>
-        <div class="field"><label>群 ID</label><input id="summarizeGroup" type="number" placeholder="群号"></div>
-        <button class="primary" onclick="adminSummarize()" style="margin-top:12px;">总结</button>
-      </div>
-      <div style="background:rgba(15,23,42,.5); border:1px solid var(--border); border-radius:12px; padding:16px;">
-        <h3 style="margin-top:0;">发送测试消息</h3>
-        <div class="field"><label>群 ID</label><input id="sendGroup" type="number" placeholder="群号"></div>
-        <div class="field"><label>用户 ID（私聊）</label><input id="sendUser" type="number" placeholder="QQ 号"></div>
-        <div class="field"><label>内容</label><input id="sendMessage" type="text" placeholder="要发送的消息"></div>
-        <button class="primary" onclick="adminSend()" style="margin-top:12px;">发送</button>
-      </div>
-    </div>
-  </section>
-
-  <section id="panel-logs" class="card hidden">
-    <div class="toolbar">
-      <button class="primary" onclick="loadLogs()">刷新日志</button>
-      <label style="color:var(--muted); font-size:14px; display:flex; align-items:center; gap:6px;">
-        <input type="checkbox" id="autoLog" checked onchange="toggleLogStream()" style="accent-color:var(--accent); width:16px; height:16px;"> 实时推送
-      </label>
-    </div>
-    <div class="log-box" id="logOutput">加载中...</div>
-  </section>
-</div>
-
-<div class="toast" id="toast"></div>
-
-<script>
-const LABELS = {
-  Version:'版本', LLMConfigFile:'LLM 配置文件', Bot:'机器人', Filter:'过滤器', Memory:'记忆', Store:'存储',
-  VLM:'图片识别', Meme:'表情包', Attention:'注意力', WebUI:'Web 控制台', QQ:'QQ', LLM:'语言模型', Log:'日志',
-  SelfID:'机器人QQ', AdminIDs:'管理员QQ', Name:'名字', Nicknames:'昵称', Personality:'性格', SpeakingStyle:'说话风格',
-  Background:'背景', Interests:'兴趣', MentionReply:'被@必回', Keywords:'关键词', RandomProbability:'随机概率',
-  InterestReply:'兴趣回复', CooldownSeconds:'冷却秒数', GroupRules:'群规则', Forbidden:'禁止事项', SystemPrompt:'系统提示词',
-  Enabled:'启用', Mode:'模式', GroupIDs:'群ID', UserIDs:'用户ID', ShortTermSize:'短期记忆条数', LongTermEnabled:'长期记忆',
-  ContextMaxAgeMinutes:'上下文时效(分钟)', SummaryThreshold:'总结阈值', SummaryIntervalMinutes:'总结间隔(分钟)',
-  Driver:'驱动', DSN:'数据库路径', Provider:'供应商', BaseURL:'接口地址', APIKey:'API密钥', Model:'模型',
-  Temperature:'温度', MaxTokens:'最大Token', TimeoutSeconds:'超时(秒)', CachePrefix:'缓存前缀', CacheMaxTokens:'缓存最大Token',
-  LogCache:'缓存日志', Directory:'目录', StealProbability:'偷图概率', MaxScore:'最大分数', DecayPerMinute:'每分钟衰减',
-  BoostAtBot:'@提升', BoostMention:'提名称提升', BoostInterest:'兴趣提升', BoostBotReplied:'回复后提升',
-  TripHoldSeconds:'熔断秒数', Addr:'地址', WSURL:'WebSocket地址', AccessToken:'访问令牌', Prompt:'提示词', Level:'日志级别',
-  OneBot:'OneBot'
-};
-function prettyKey(key) {
-  if (LABELS[key]) return LABELS[key];
-  return key.replace(/([A-Z])/g, ' $1').replace(/^./, s => s.toUpperCase());
-}
-let state = null;
-let webuiToken = localStorage.getItem('webui_token') || '';
-
-async function apiFetch(path, options) {
-  options = options || {};
-  options.headers = Object.assign({}, options.headers || {});
-  if (webuiToken) options.headers['Authorization'] = 'Bearer ' + webuiToken;
-  let res = await fetch(path, options);
-  if (res.status === 401) {
-    const token = prompt('请输入 WebUI 访问令牌');
-    if (!token) return res;
-    webuiToken = token;
-    localStorage.setItem('webui_token', token);
-    options.headers['Authorization'] = 'Bearer ' + token;
-    res = await fetch(path, options);
-  }
-  return res;
-}
-
-function switchTab(name) {
-  document.getElementById('tab-config').classList.toggle('active', name === 'config');
-  document.getElementById('tab-status').classList.toggle('active', name === 'status');
-  document.getElementById('tab-memories').classList.toggle('active', name === 'memories');
-  document.getElementById('tab-memes').classList.toggle('active', name === 'memes');
-  document.getElementById('tab-plugins').classList.toggle('active', name === 'plugins');
-  document.getElementById('tab-admin').classList.toggle('active', name === 'admin');
-  document.getElementById('tab-logs').classList.toggle('active', name === 'logs');
-  document.getElementById('panel-config').classList.toggle('hidden', name !== 'config');
-  document.getElementById('panel-status').classList.toggle('hidden', name !== 'status');
-  document.getElementById('panel-memories').classList.toggle('hidden', name !== 'memories');
-  document.getElementById('panel-memes').classList.toggle('hidden', name !== 'memes');
-  document.getElementById('panel-plugins').classList.toggle('hidden', name !== 'plugins');
-  document.getElementById('panel-admin').classList.toggle('hidden', name !== 'admin');
-  document.getElementById('panel-logs').classList.toggle('hidden', name !== 'logs');
-  if (name === 'status') loadStatus();
-  if (name === 'memories') loadMemories();
-  if (name === 'memes') loadMemes();
-  if (name === 'plugins') loadPlugins();
-  if (name === 'logs') loadLogs();
-}
-
-function toast(msg, ok) {
-  const el = document.getElementById('toast');
-  el.textContent = msg;
-  el.className = 'toast show ' + (ok ? 'ok' : 'err');
-  clearTimeout(el._timer);
-  el._timer = setTimeout(() => el.className = 'toast', 2600);
-}
-
-function setByPath(obj, path, value) {
-  const parts = path.split('.');
-  let cur = obj;
-  for (let i = 0; i < parts.length - 1; i++) {
-    if (!cur[parts[i]]) cur[parts[i]] = {};
-    cur = cur[parts[i]];
-  }
-  cur[parts[parts.length - 1]] = value;
-}
-
-function renderForm(obj, container, prefix) {
-  container.innerHTML = '';
-  for (const key of Object.keys(obj)) {
-    const value = obj[key];
-    const path = prefix ? prefix + '.' + key : key;
-    const label = prettyKey(key);
-    const wrap = document.createElement('div');
-    wrap.className = 'field';
-
-    if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
-      const fieldset = document.createElement('fieldset');
-      const legend = document.createElement('legend');
-      legend.textContent = label;
-      const inner = document.createElement('div');
-      inner.className = 'form-grid';
-      fieldset.appendChild(legend);
-      fieldset.appendChild(inner);
-      container.appendChild(fieldset);
-      renderForm(value, inner, path);
-      continue;
-    }
-
-    if (Array.isArray(value)) {
-      const lab = document.createElement('label');
-      lab.textContent = label;
-      const input = document.createElement('input');
-      input.type = 'text';
-      input.value = value.join(', ');
-      input.placeholder = '多个值用逗号分隔';
-      input.dataset.path = path;
-      input.dataset.kind = 'array';
-      const isNum = value.length > 0 && typeof value[0] === 'number';
-      input.dataset.arrType = isNum ? 'number' : 'string';
-      input.addEventListener('change', () => {
-        const raw = input.value.split(',').map(s => s.trim()).filter(Boolean);
-        const val = input.dataset.arrType === 'number' ? raw.map(Number) : raw;
-        setByPath(state, path, val);
-      });
-      wrap.appendChild(lab);
-      wrap.appendChild(input);
-      container.appendChild(wrap);
-      continue;
-    }
-
-    const lab = document.createElement('label');
-    lab.textContent = label;
-    const input = document.createElement('input');
-
-    if (typeof value === 'boolean') {
-      input.type = 'checkbox';
-      input.checked = value;
-      input.dataset.path = path;
-      input.dataset.kind = 'bool';
-      input.addEventListener('change', () => setByPath(state, path, input.checked));
-      wrap.classList.add('check');
-      wrap.appendChild(input);
-      wrap.appendChild(lab);
-      container.appendChild(wrap);
-      continue;
-    }
-
-    if (typeof value === 'number') {
-      input.type = 'number';
-      input.step = Number.isInteger(value) ? '1' : 'any';
-      input.value = value;
-      input.dataset.path = path;
-      input.dataset.kind = 'number';
-      input.addEventListener('change', () => setByPath(state, path, input.value === '' ? 0 : Number(input.value)));
-    } else {
-      input.type = 'text';
-      input.value = value || '';
-      input.dataset.path = path;
-      input.dataset.kind = 'string';
-      input.addEventListener('change', () => setByPath(state, path, input.value));
-    }
-
-    wrap.appendChild(lab);
-    wrap.appendChild(input);
-    container.appendChild(wrap);
-  }
-}
-
-async function loadConfig() {
-  const res = await apiFetch('/api/config');
-  if (!res.ok) { toast('加载配置失败', false); return; }
-  state = await res.json();
-  renderForm(state, document.getElementById('configForm'));
-  toast('配置已加载', true);
-}
-
-async function saveConfig() {
-  if (!state) { toast('请先加载配置', false); return; }
-  const res = await apiFetch('/api/config', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify(state)
-  });
-  const data = await res.json();
-  if (!res.ok) {
-    toast('保存失败：' + (data.error || res.statusText), false);
-    return;
-  }
-  state = data.config;
-  renderForm(state, document.getElementById('configForm'));
-  toast('已保存并热重载', true);
-}
-
-async function reloadConfig() {
-  const res = await apiFetch('/api/reload', {method: 'POST'});
-  const data = await res.json();
-  if (!res.ok) { toast('热重载失败', false); return; }
-  state = data.config;
-  renderForm(state, document.getElementById('configForm'));
-  toast('已热重载', true);
-}
-
-function esc(s) {
-  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-}
-
-async function loadStatus() {
-  const res = await apiFetch('/api/status');
-  if (!res.ok) return;
-  const data = await res.json();
-  const cards = [
-    ['运行状态', data.running ? '在线' : '离线', ''],
-    ['群数量', data.groups ?? '-', (data.group_ids || []).join(', ')],
-    ['成员数', data.members ?? '-', ''],
-    ['消息数', data.messages ?? '-', ''],
-    ['记忆数', data.memories ?? '-', ''],
-    ['LLM 请求', data.llm ? data.llm.requests : '-', ''],
-    ['LLM Tokens', data.llm ? data.llm.tokens : '-', ''],
-    ['LLM 错误', data.llm ? data.llm.errors : '-', ''],
-    ['鉴权', data.auth_enabled ? '已开启' : '未开启', ''],
-    ['测试模式', data.dry_run ? '开启' : '关闭', data.dry_run ? '不会真正发送' : '']
-  ];
-  document.getElementById('statusCards').innerHTML = cards.map(c =>
-    '<div class="stat-card"><div class="label">' + esc(c[0]) + '</div><div class="value">' + esc(c[1]) + '</div>' +
-    (c[2] ? '<div class="sub">' + esc(c[2]) + '</div>' : '') + '</div>'
-  ).join('');
-  document.getElementById('statusDetail').textContent = JSON.stringify(data, null, 2);
-}
-
-async function loadMemories() {
-  const q = document.getElementById('memorySearch').value.trim();
-  const url = q ? '/api/memories?limit=100&q=' + encodeURIComponent(q) : '/api/memories?limit=100';
-  const res = await apiFetch(url);
-  if (!res.ok) return;
-  const data = await res.json();
-  const rows = (data.memories || []).map(m =>
-    '<tr>' +
-    '<td style="padding:8px; border-bottom:1px solid var(--border);">' + esc(m.ID) + '</td>' +
-    '<td style="padding:8px; border-bottom:1px solid var(--border);">' + esc(m.GroupID) + '</td>' +
-    '<td style="padding:8px; border-bottom:1px solid var(--border);">' + esc(m.UserID) + '</td>' +
-    '<td style="padding:8px; border-bottom:1px solid var(--border);">' + esc(m.Content) + '</td>' +
-    '<td style="padding:8px; border-bottom:1px solid var(--border);">' + esc(m.CreatedAt) + '</td>' +
-    '<td style="padding:8px; border-bottom:1px solid var(--border);"><button class="small danger" onclick="deleteMemory(' + m.ID + ')">删除</button></td>' +
-    '</tr>'
-  ).join('');
-  document.getElementById('memoriesTable').innerHTML = rows || '<tr><td colspan="6" style="padding:12px; color:var(--muted);">暂无记忆</td></tr>';
-}
-
-async function deleteMemory(id) {
-  if (!confirm('确认删除记忆 #' + id + ' ？')) return;
-  const res = await apiFetch('/api/memories/delete', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({id: id})
-  });
-  if (!res.ok) { toast('删除失败', false); return; }
-  toast('已删除', true);
-  loadMemories();
-}
-
-async function loadMemes() {
-  const res = await apiFetch('/api/memes');
-  if (!res.ok) return;
-  const data = await res.json();
-  const paths = data.memes || [];
-  if (paths.length === 0) {
-    document.getElementById('memeGrid').innerHTML = '<p style="color:var(--muted); grid-column:1/-1;">暂无表情包</p>';
-    return;
-  }
-  document.getElementById('memeGrid').innerHTML = paths.map(p => {
-    const name = p.split(/[\\/]/).pop();
-    const url = '/api/memes/file?path=' + encodeURIComponent(p);
-    return '<div style="background:rgba(15,23,42,.5); border:1px solid var(--border); border-radius:12px; padding:10px; text-align:center;">' +
-      '<a href="' + url + '" target="_blank"><img src="' + url + '" alt="' + esc(name) + '" style="max-width:100%; height:100px; object-fit:contain; border-radius:8px; background:#0f172a;"></a>' +
-      '<div style="font-size:12px; color:var(--muted); margin:6px 0; word-break:break-all;">' + esc(name) + '</div>' +
-      '<button class="small danger" data-path="' + encodeURIComponent(p) + '" onclick="deleteMeme(this.dataset.path)">删除</button>' +
-      '</div>';
-  }).join('');
-}
-
-async function addMeme() {
-  const url = document.getElementById('memeUrl').value.trim();
-  if (!url) { toast('请输入图片 URL', false); return; }
-  const res = await apiFetch('/api/memes/add', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({url: url})
-  });
-  if (!res.ok) { toast('添加失败', false); return; }
-  document.getElementById('memeUrl').value = '';
-  toast('已添加', true);
-  loadMemes();
-}
-
-async function deleteMeme(encodedPath) {
-  if (!confirm('确认删除这个表情包？')) return;
-  const path = decodeURIComponent(encodedPath);
-  const res = await apiFetch('/api/memes/delete', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({path: path})
-  });
-  if (!res.ok) { toast('删除失败', false); return; }
-  toast('已删除', true);
-  loadMemes();
-}
-
-async function loadPlugins() {
-  const res = await apiFetch('/api/plugins');
-  if (!res.ok) return;
-  const data = await res.json();
-  const rows = (data.plugins || []).map(p =>
-    '<tr>' +
-    '<td style="padding:8px; border-bottom:1px solid var(--border);">' + esc(p.name) + '</td>' +
-    '<td style="padding:8px; border-bottom:1px solid var(--border);">' + esc(p.stage) + '</td>' +
-    '<td style="padding:8px; border-bottom:1px solid var(--border);">' + esc(p.priority) + '</td>' +
-    '<td style="padding:8px; border-bottom:1px solid var(--border);">' + esc(p.description) + '</td>' +
-    '<td style="padding:8px; border-bottom:1px solid var(--border);">' + (p.enabled ? '<span style="color:var(--ok);">启用</span>' : '<span style="color:var(--err);">禁用</span>') + '</td>' +
-    '<td style="padding:8px; border-bottom:1px solid var(--border);"><button class="small" onclick="togglePlugin(\'' + p.name.replace(/'/g, "\\'") + '\',' + !p.enabled + ')">' + (p.enabled ? '禁用' : '启用') + '</button></td>' +
-    '</tr>'
-  ).join('');
-  document.getElementById('pluginsTable').innerHTML = rows || '<tr><td colspan="6" style="padding:12px; color:var(--muted);">暂无插件</td></tr>';
-}
-
-async function togglePlugin(name, enabled) {
-  const res = await apiFetch('/api/plugins/toggle', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({name: name, enabled: enabled})
-  });
-  if (!res.ok) { toast('切换失败', false); return; }
-  toast('已切换', true);
-  loadPlugins();
-}
-
-async function adminClear() {
-  const group_id = Number(document.getElementById('clearGroup').value || 0);
-  const user_id = Number(document.getElementById('clearUser').value || 0);
-  if (!group_id && !user_id) { toast('请填写群 ID 或用户 ID', false); return; }
-  const res = await apiFetch('/api/admin/clear', {
-    method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({group_id: group_id, user_id: user_id})
-  });
-  if (!res.ok) { toast('清空失败', false); return; }
-  toast('已清空', true);
-}
-
-async function adminSummarize() {
-  const group_id = Number(document.getElementById('summarizeGroup').value || 0);
-  if (!group_id) { toast('请填写群 ID', false); return; }
-  const res = await apiFetch('/api/admin/summarize', {
-    method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({group_id: group_id})
-  });
-  if (!res.ok) { toast('触发总结失败', false); return; }
-  toast('已触发总结', true);
-}
-
-async function adminSend() {
-  const group_id = Number(document.getElementById('sendGroup').value || 0);
-  const user_id = Number(document.getElementById('sendUser').value || 0);
-  const message = document.getElementById('sendMessage').value.trim();
-  if (!message) { toast('请输入消息内容', false); return; }
-  if (!group_id && !user_id) { toast('请填写群 ID 或用户 ID', false); return; }
-  const res = await apiFetch('/api/admin/send', {
-    method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({group_id: group_id, user_id: user_id, message: message})
-  });
-  if (!res.ok) { toast('发送失败', false); return; }
-  toast('已发送', true);
-}
-
-let logController = null;
-
-function stopLogStream() {
-  if (logController) {
-    logController.abort();
-    logController = null;
-  }
-}
-
-async function loadLogs() {
-  const res = await apiFetch('/api/logs?limit=300');
-  const data = await res.json();
-  const el = document.getElementById('logOutput');
-  el.textContent = (data.logs || []).join('\n') || '暂无日志';
-  el.scrollTop = el.scrollHeight;
-}
-
-function appendLog(line) {
-  const el = document.getElementById('logOutput');
-  const text = el.textContent ? el.textContent + '\n' + line : line;
-  const lines = text.split('\n');
-  el.textContent = lines.length > 1000 ? lines.slice(lines.length - 1000).join('\n') : text;
-  el.scrollTop = el.scrollHeight;
-}
-
-async function startLogStream() {
-  stopLogStream();
-  const controller = new AbortController();
-  logController = controller;
-  try {
-    const res = await apiFetch('/api/logs/stream', {signal: controller.signal});
-    if (!res.ok || !res.body) throw new Error('stream unavailable');
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buf = '';
-    while (true) {
-      const {done, value} = await reader.read();
-      if (done) break;
-      buf += decoder.decode(value, {stream: true});
-      const parts = buf.split('\n\n');
-      buf = parts.pop();
-      for (const part of parts) {
-        if (part.startsWith('data: ')) appendLog(part.slice(6));
-      }
-    }
-  } catch (e) {
-    if (e.name !== 'AbortError') loadLogs();
-  } finally {
-    if (logController === controller) logController = null;
-  }
-}
-
-function toggleLogStream() {
-  if (document.getElementById('autoLog').checked) startLogStream();
-  else stopLogStream();
-}
-
-setInterval(() => {
-  if (!document.getElementById('panel-status').classList.contains('hidden')) loadStatus();
-}, 5000);
-loadConfig();
-loadStatus();
-loadLogs();
-if (document.getElementById('autoLog').checked) startLogStream();
-</script>
-</body>
-</html>
-`
