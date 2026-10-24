@@ -1,4 +1,4 @@
-﻿package config
+package config
 
 import (
 	"fmt"
@@ -6,6 +6,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 )
+
 func migrateNode(root *yaml.Node, from int) error {
 	switch from {
 	case 1:
@@ -286,4 +287,3 @@ func removeMappingKey(mapping *yaml.Node, key string) {
 }
 
 // canonicalize 按预设顺序重排配置文件的各段和字段。
-

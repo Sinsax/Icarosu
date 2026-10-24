@@ -11,6 +11,7 @@ import (
 
 	"icarosu/internal/config"
 )
+
 func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -139,4 +140,3 @@ func (s *Server) handleReload(w http.ResponseWriter, r *http.Request) {
 		"config": s.manager.Get(),
 	})
 }
-

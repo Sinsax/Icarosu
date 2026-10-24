@@ -63,11 +63,11 @@ func (m *Metrics) Snapshot() map[string]int64 {
 
 // Span 是一个简单的时间段追踪单元。
 type Span struct {
-	mu      sync.Mutex
-	name    string
-	start   time.Time
-	fields  map[string]string
-	ended   bool
+	mu       sync.Mutex
+	name     string
+	start    time.Time
+	fields   map[string]string
+	ended    bool
 	duration time.Duration
 }
 

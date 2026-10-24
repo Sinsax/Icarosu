@@ -14,8 +14,8 @@ type Style struct {
 
 // Library 是表达方式库，支持全局默认和按群隔离。
 type Library struct {
-	mu         sync.RWMutex
-	styles     []Style
+	mu          sync.RWMutex
+	styles      []Style
 	groupStyles map[int64][]Style
 }
 

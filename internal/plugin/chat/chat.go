@@ -8,9 +8,9 @@ import (
 	"log/slog"
 	"math/rand"
 
+	"icarosu/internal/attention"
 	corechat "icarosu/internal/core/chat"
 	"icarosu/internal/core/domain"
-	"icarosu/internal/attention"
 	"icarosu/internal/llm"
 	"icarosu/internal/meme"
 	"icarosu/internal/memory"

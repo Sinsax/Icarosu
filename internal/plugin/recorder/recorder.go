@@ -17,11 +17,11 @@ import (
 // 同时收集引用回复、撤回、活跃时间段、互动关系。
 type RecorderPlugin struct {
 	plugin.BasePlugin
-	mem     *memory.Memory
-	store   store.RecorderStore
-	vision  *vision.Service
-	topic   *topic.Tracker
-	logger  *slog.Logger
+	mem    *memory.Memory
+	store  store.RecorderStore
+	vision *vision.Service
+	topic  *topic.Tracker
+	logger *slog.Logger
 }
 
 // Option 用于配置 RecorderPlugin。

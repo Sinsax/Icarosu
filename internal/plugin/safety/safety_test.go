@@ -11,9 +11,9 @@ import (
 type noopBot struct{}
 
 func (noopBot) SendGroupMessage(context.Context, int64, string) error   { return nil }
-func (noopBot) SendPrivateMessage(context.Context, int64, string) error  { return nil }
-func (noopBot) SendGroupImage(context.Context, int64, string) error      { return nil }
-func (noopBot) SendPrivateImage(context.Context, int64, string) error    { return nil }
+func (noopBot) SendPrivateMessage(context.Context, int64, string) error { return nil }
+func (noopBot) SendGroupImage(context.Context, int64, string) error     { return nil }
+func (noopBot) SendPrivateImage(context.Context, int64, string) error   { return nil }
 
 func TestSafetyBlocksForbiddenKeyword(t *testing.T) {
 	p := New(config.BotConfig{Forbidden: []string{"违法内容"}})

@@ -1,10 +1,11 @@
-﻿package webui
+package webui
 
 import (
 	"encoding/json"
 	"io"
 	"net/http"
 )
+
 func (s *Server) handleAdminClear(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -95,4 +96,3 @@ func (s *Server) handleAdminSend(w http.ResponseWriter, r *http.Request) {
 	}
 	s.writeJSON(w, map[string]any{"ok": true})
 }
-

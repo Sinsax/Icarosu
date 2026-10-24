@@ -4,9 +4,9 @@ import (
 	"context"
 	"log/slog"
 
-	coretrigger "icarosu/internal/core/trigger"
 	"icarosu/internal/attention"
 	"icarosu/internal/config"
+	coretrigger "icarosu/internal/core/trigger"
 	"icarosu/internal/plugin"
 )
 

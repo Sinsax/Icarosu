@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 )
+
 func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -64,4 +65,3 @@ func (s *Server) handleLogStream(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 }
-

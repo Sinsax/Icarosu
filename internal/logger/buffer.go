@@ -10,10 +10,10 @@ import (
 
 // Buffer 是一个内存日志环形缓冲，可作为 io.Writer 使用。
 type Buffer struct {
-	mu     sync.Mutex
-	lines  []string
-	max    int
-	subs   map[chan string]struct{}
+	mu    sync.Mutex
+	lines []string
+	max   int
+	subs  map[chan string]struct{}
 }
 
 // NewBuffer 创建一个最多保存 max 行的日志缓冲。

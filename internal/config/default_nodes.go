@@ -7,6 +7,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 )
+
 func defaultLLMNode() *yaml.Node {
 	node := &yaml.Node{
 		Kind: yaml.MappingNode,
@@ -251,4 +252,3 @@ func writeWithBackup(path string, original, migrated []byte) error {
 	}
 	return nil
 }
-

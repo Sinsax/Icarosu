@@ -1,4 +1,4 @@
-﻿package webui
+package webui
 
 import (
 	"encoding/json"
@@ -9,6 +9,7 @@ import (
 
 	"icarosu/internal/store"
 )
+
 func (s *Server) handleMemories(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -70,4 +71,3 @@ func (s *Server) handleMemoryDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	s.writeJSON(w, map[string]any{"ok": true})
 }
-

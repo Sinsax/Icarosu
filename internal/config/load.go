@@ -7,6 +7,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 )
+
 func Load(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -359,4 +360,3 @@ func nodeVersion(root *yaml.Node) (int, error) {
 
 // migrateNode 把旧版本节点迁移到当前版本。
 // 使用 yaml.Node 操作可以尽量保留原配置文件里的注释。
-

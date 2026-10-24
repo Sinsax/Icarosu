@@ -1,4 +1,4 @@
-﻿package config
+package config
 
 import (
 	"fmt"
@@ -7,6 +7,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 )
+
 type providerPreset struct {
 	BaseURL string
 	Model   string
@@ -134,4 +135,3 @@ func applyProviderDefaults(cfg *Config) {
 }
 
 // Load 读取配置文件。
-

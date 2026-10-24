@@ -21,8 +21,8 @@ import (
 	"icarosu/internal/persona"
 	"icarosu/internal/platform"
 	"icarosu/internal/plugin"
-	"icarosu/internal/plugin/builtin"
 	"icarosu/internal/plugin/admin"
+	"icarosu/internal/plugin/builtin"
 	"icarosu/internal/plugin/chat"
 	"icarosu/internal/plugin/filter"
 	"icarosu/internal/plugin/jargonlearn"
@@ -72,10 +72,10 @@ type App struct {
 	visionSvc        *vision.Service
 	personaPrompt    string
 
-	client       platform.Adapter
-	qqClient     *qq.Client
+	client        platform.Adapter
+	qqClient      *qq.Client
 	botForPlugins plugin.Bot
-	manager      *plugin.Manager
+	manager       *plugin.Manager
 
 	toolRegistry *tools.Registry
 	styleLib     *style.Library
@@ -412,4 +412,3 @@ func (a *App) Close() error {
 	}
 	return nil
 }
-

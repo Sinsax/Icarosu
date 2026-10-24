@@ -20,9 +20,9 @@ import (
 
 // Server 鎻愪緵鏈湴 WebUI锛岀敤浜庢煡鐪?缂栬緫閰嶇疆銆佺儹閲嶈浇鍜屾煡鐪嬫棩蹇椼€?
 type Server struct {
-	manager   *config.Manager
-	logger    *slog.Logger
-	logs      *logger.Buffer
+	manager    *config.Manager
+	logger     *slog.Logger
+	logs       *logger.Buffer
 	store      store.FullStore
 	attention  *attention.Tracker
 	llm        *llm.Client

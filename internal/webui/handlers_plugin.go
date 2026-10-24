@@ -7,6 +7,7 @@ import (
 
 	"icarosu/internal/plugin"
 )
+
 func (s *Server) handlePlugins(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -40,4 +41,3 @@ func (s *Server) handlePluginToggle(w http.ResponseWriter, r *http.Request) {
 	s.logger.Info("plugin toggled", "name", req.Name, "enabled", req.Enabled)
 	s.writeJSON(w, map[string]any{"ok": true})
 }
-

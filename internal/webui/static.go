@@ -690,4 +690,3 @@ if (document.getElementById('autoLog').checked) startLogStream();
 </body>
 </html>
 `
-

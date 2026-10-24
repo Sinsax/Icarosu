@@ -107,5 +107,3 @@ func Default() *Config {
 		},
 	}
 }
-
-

@@ -1,4 +1,5 @@
 package config
+
 const CurrentVersion = 12
 
 type Config struct {
@@ -152,5 +153,3 @@ var (
 	llmOrder       = []string{"provider", "base_url", "api_key", "model", "temperature", "max_tokens", "timeout_seconds", "cache_prefix", "cache_max_tokens", "log_cache"}
 	logOrder       = []string{"level"}
 )
-
-

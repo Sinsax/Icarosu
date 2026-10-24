@@ -4,8 +4,8 @@ import (
 	"context"
 	"log/slog"
 
-	coresummarizer "icarosu/internal/core/summarizer"
 	"icarosu/internal/config"
+	coresummarizer "icarosu/internal/core/summarizer"
 	"icarosu/internal/llm"
 	"icarosu/internal/memory"
 	"icarosu/internal/plugin"

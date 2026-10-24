@@ -1,10 +1,11 @@
-﻿package webui
+package webui
 
 import (
 	"encoding/json"
 	"io"
 	"net/http"
 )
+
 func (s *Server) handleMemes(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -81,4 +82,3 @@ func (s *Server) handleMemeFile(w http.ResponseWriter, r *http.Request) {
 	}
 	http.ServeFile(w, r, resolved)
 }
-

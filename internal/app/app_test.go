@@ -86,7 +86,7 @@ func (f *fakeAdapter) Connect(ctx context.Context) error {
 
 func (f *fakeAdapter) Close() error { return nil }
 
-func (f *fakeAdapter) SendGroupMessage(context.Context, int64, string) error  { return nil }
+func (f *fakeAdapter) SendGroupMessage(context.Context, int64, string) error   { return nil }
 func (f *fakeAdapter) SendPrivateMessage(context.Context, int64, string) error { return nil }
 func (f *fakeAdapter) SendGroupImage(context.Context, int64, string) error     { return nil }
 func (f *fakeAdapter) SendPrivateImage(context.Context, int64, string) error   { return nil }

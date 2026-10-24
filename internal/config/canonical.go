@@ -1,6 +1,7 @@
-﻿package config
+package config
 
 import "gopkg.in/yaml.v3"
+
 func canonicalize(root *yaml.Node) {
 	reorderMapping(root, topLevelOrder)
 
@@ -122,5 +123,3 @@ func mappingHasOrder(mapping *yaml.Node, order []string) bool {
 	}
 	return true
 }
-
-

@@ -42,7 +42,7 @@ func TestFullPipelineChatSenderIntegration(t *testing.T) {
 	}
 	m.Register(recorder.New(mem))
 	m.Register(trigger.New(config.BotConfig{
-		MentionReply: true,
+		MentionReply:    true,
 		CooldownSeconds: 60,
 	}))
 	m.Register(chat.New(client, "你是群友", chat.WithMemory(mem)))
