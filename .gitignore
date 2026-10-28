@@ -20,3 +20,6 @@ MaiBot/
 # 测试临时产物
 .app-run-test-*/
 *.db
+
+# 本地构建缓存 / 审查产物
+.tmp/
