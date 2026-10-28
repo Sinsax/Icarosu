@@ -1,0 +1,8 @@
+{
+  "type": "object",
+  "properties": {
+    "sample_every": {"type": "integer", "default": 20},
+    "max_samples": {"type": "integer", "default": 10}
+  },
+  "additionalProperties": true
+}

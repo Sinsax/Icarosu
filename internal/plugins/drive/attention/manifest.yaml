@@ -1,0 +1,12 @@
+api_version: 1
+id: drive.attention
+version: 0.1.0
+kind: drive
+name: 注意力决策
+description: 私聊/@/关键词/随机接话
+provides:
+  - decider
+requires:
+  - kernel.config
+config_schema: config.schema.json
+manual: MANUAL.md

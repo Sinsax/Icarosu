@@ -1,0 +1,13 @@
+api_version: 1
+id: persona.default
+version: 0.1.0
+kind: persona
+name: 默认人格
+description: 从配置构建默认群友人设
+provides:
+  - persona
+requires:
+  - kernel.config
+config_schema: config.schema.json
+permissions: []
+manual: MANUAL.md

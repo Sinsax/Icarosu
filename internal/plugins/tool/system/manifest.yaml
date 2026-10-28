@@ -1,0 +1,15 @@
+api_version: 1
+id: tool.system
+version: 0.1.0
+kind: tool
+name: 系统工具
+description: 连通性/版本等系统工具
+provides:
+  - tool.system
+requires:
+  - kernel.tools
+tools:
+  - name: system_ping
+    summary: 连通性测试，返回 pong
+    permissions: []
+manual: MANUAL.md

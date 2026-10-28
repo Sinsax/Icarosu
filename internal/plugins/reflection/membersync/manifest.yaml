@@ -1,0 +1,14 @@
+api_version: 1
+id: reflection.membersync
+version: 0.1.0
+kind: reflection
+name: 群成员同步
+description: 定期同步群成员名单，作为上下文
+provides:
+  - reflection.membersync
+requires:
+  - kernel.actions
+config_schema: config.schema.json
+permissions:
+  - members.read
+manual: MANUAL.md

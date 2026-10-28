@@ -1,0 +1,29 @@
+# kernel.yaml（SDK runtime）
+# 复制为 configs/kernel.yaml 后使用：
+#   go run ./cmd/icarosu -kernel-config configs/kernel.yaml
+# 路径相对本文件所在目录。
+kernel:
+  config: config.yaml
+  plugins_dir: plugins
+  scheduler_workers: 4
+  scheduler_buffer: 128
+
+plugins:
+  enabled:
+    - adapter.onebot
+    - persona.default
+    - renderer.default
+    - drive.attention
+    - memory.recent
+    - governance.filter
+    - governance.safety
+    - reflection.replylog
+    - reflection.summarizer
+    - reflection.stylelearn
+    - reflection.jargonlearn
+    - reflection.membersync
+    - reflection.steal
+    - tool.time
+    - tool.system
+    - interface.webui
+    - interface.admin

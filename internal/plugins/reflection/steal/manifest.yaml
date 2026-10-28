@@ -1,0 +1,14 @@
+api_version: 1
+id: reflection.steal
+version: 0.1.0
+kind: reflection
+name: 表情包收藏
+description: 识别符合人设的表情包并收藏
+provides:
+  - reflection.steal
+requires: []
+config_schema: config.schema.json
+permissions:
+  - vision.analyze
+  - memes.write
+manual: MANUAL.md

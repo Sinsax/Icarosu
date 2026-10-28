@@ -1,0 +1,14 @@
+api_version: 1
+id: reflection.summarizer
+version: 0.1.0
+kind: reflection
+name: 群聊总结
+description: 每 N 条消息调用 LLM 总结群聊，作为上下文
+provides:
+  - reflection.summarizer
+requires:
+  - kernel.llm
+config_schema: config.schema.json
+permissions:
+  - llm.chat
+manual: MANUAL.md

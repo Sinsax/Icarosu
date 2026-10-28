@@ -1,0 +1,14 @@
+api_version: 1
+id: reflection.jargonlearn
+version: 0.1.0
+kind: reflection
+name: 黑话学习
+description: 采样群消息学习群内黑话/梗
+provides:
+  - reflection.jargonlearn
+requires:
+  - kernel.llm
+config_schema: config.schema.json
+permissions:
+  - llm.chat
+manual: MANUAL.md

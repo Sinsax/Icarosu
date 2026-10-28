@@ -1,0 +1,11 @@
+api_version: 1
+id: renderer.default
+version: 0.1.0
+kind: renderer
+name: 默认渲染
+description: 把 LLM 回复渲染成文本 Action
+provides:
+  - renderer
+requires:
+  - kernel.actions
+manual: MANUAL.md

@@ -1,0 +1,14 @@
+api_version: 1
+id: adapter.onebot
+version: 0.1.0
+kind: adapter
+name: OneBot v11
+description: QQ 群/私聊接入
+provides:
+  - adapter.onebot
+requires:
+  - kernel.actions
+permissions:
+  - network.outbound
+  - messaging.send
+manual: MANUAL.md

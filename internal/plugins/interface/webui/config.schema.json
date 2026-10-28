@@ -1,0 +1,9 @@
+{
+  "type": "object",
+  "properties": {
+    "enabled": {"type": "boolean", "default": true},
+    "addr": {"type": "string", "default": "127.0.0.1:8081"},
+    "token": {"type": "string", "default": ""}
+  },
+  "additionalProperties": true
+}

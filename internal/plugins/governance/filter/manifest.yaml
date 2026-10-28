@@ -1,0 +1,12 @@
+api_version: 1
+id: governance.filter
+version: 0.1.0
+kind: governance
+name: 消息过滤
+description: 按群/用户白名单或黑名单过滤事件
+provides:
+  - policy.filter
+requires:
+  - kernel.config
+config_schema: config.schema.json
+manual: MANUAL.md

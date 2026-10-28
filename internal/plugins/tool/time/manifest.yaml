@@ -1,0 +1,19 @@
+api_version: 1
+id: tool.time
+version: 0.1.0
+kind: tool
+name: 时间
+description: 提供当前日期和时间
+provides:
+  - tool.time
+requires:
+  - kernel.tools
+config_schema: config.schema.json
+permissions: []
+tools:
+  - name: time_now
+    summary: 获取当前日期和时间
+    schema: schemas/time_now.json
+    manual: manuals/time_now.md
+    permissions: []
+manual: MANUAL.md

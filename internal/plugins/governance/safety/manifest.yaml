@@ -1,0 +1,12 @@
+api_version: 1
+id: governance.safety
+version: 0.1.0
+kind: governance
+name: 安全过滤
+description: 按 forbidden 关键词拒绝事件
+provides:
+  - policy.safety
+requires:
+  - kernel.config
+config_schema: config.schema.json
+manual: MANUAL.md

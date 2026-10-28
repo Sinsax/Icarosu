@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Icarosu SDK</title>
+<style>
+body{font-family:system-ui,sans-serif;margin:2rem;max-width:1000px}
+h1{font-size:1.4rem}
+section{margin-top:1.5rem}
+pre{background:#f6f8fa;padding:1rem;overflow:auto;border-radius:6px;max-height:420px}
+input{padding:.4rem .6rem;width:320px}
+button{padding:.4rem .8rem;margin-left:.5rem}
+.row{display:flex;gap:.5rem;align-items:center}
+</style>
+</head>
+<body>
+<h1>Icarosu SDK</h1>
+<div class="row">
+  <input id="token" placeholder="WebUI token（可留空）">
+  <button id="save">保存并刷新</button>
+</div>
+<p id="error" style="color:#b00020"></p>
+<section><h2>状态</h2><pre id="status">loading...</pre></section>
+<section><h2>插件</h2><pre id="plugins">loading...</pre></section>
+<section>
+  <h2>插件启停</h2>
+  <div class="row">
+    <input id="pluginId" placeholder="插件 id，例如 reflection.steal">
+    <button id="enablePlugin">启用</button>
+    <button id="disablePlugin">停用</button>
+  </div>
+  <pre id="toggleResult">运行时启停；关键插件不可停用</pre>
+</section>
+<section>
+  <h2>插件配置</h2>
+  <div class="row">
+    <input id="configId" placeholder="插件 id，例如 persona.default">
+    <button id="configLoad">加载</button>
+    <button id="configSave">保存</button>
+  </div>
+  <textarea id="configText" rows="12" style="width:100%;font-family:monospace;margin-top:.5rem"></textarea>
+  <pre id="configResult"></pre>
+</section>
+<section>
+  <h2>插件手册</h2>
+  <div class="row">
+    <input id="manualId" placeholder="插件 id，例如 persona.default">
+    <button id="manualLoad">加载</button>
+  </div>
+  <pre id="manual">输入插件 id 后加载</pre>
+</section>
+<section>
+  <h2>工具手册 / Schema</h2>
+  <div class="row">
+    <input id="toolName" placeholder="工具名，例如 time_now">
+    <button id="toolManualLoad">手册</button>
+    <button id="toolSchemaLoad">Schema</button>
+  </div>
+  <pre id="toolMeta">输入工具名后加载</pre>
+</section>
+<section><h2>最近 Trace</h2><pre id="traces">loading...</pre></section>
+<script>
+let token = localStorage.getItem('webui_token') || '';
+const tokenInput = document.getElementById('token');
+tokenInput.value = token;
+document.getElementById('save').onclick = function () {
+  token = tokenInput.value.trim();
+  localStorage.setItem('webui_token', token);
+  refresh();
+};
+async function api(path, options) {
+  options = options || {};
+  const headers = options.headers || {};
+  if (token) headers.Authorization = 'Bearer ' + token;
+  const res = await fetch(path, Object.assign({}, options, {headers: headers}));
+  if (!res.ok) throw new Error(path + ' -> ' + res.status);
+  return res.json();
+}
+async function togglePlugin(enabled) {
+  const id = document.getElementById('pluginId').value.trim();
+  const pre = document.getElementById('toggleResult');
+  if (!id) return;
+  try {
+    const res = await api('/api/plugins/toggle', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({id: id, enabled: enabled})
+    });
+    pre.textContent = JSON.stringify(res, null, 2);
+    refresh();
+  } catch (e) {
+    pre.textContent = String(e);
+  }
+}
+async function apiText(path, options) {
+  options = options || {};
+  const headers = options.headers || {};
+  if (token) headers.Authorization = 'Bearer ' + token;
+  const res = await fetch(path, Object.assign({}, options, {headers: headers}));
+  if (!res.ok) throw new Error(path + ' -> ' + res.status);
+  return res.text();
+}
+document.getElementById('configLoad').onclick = async function () {
+  const id = document.getElementById('configId').value.trim();
+  const out = document.getElementById('configResult');
+  if (!id) return;
+  try {
+    const text = await apiText('/api/plugins/config?id=' + encodeURIComponent(id));
+    document.getElementById('configText').value = text;
+    out.textContent = 'loaded';
+  } catch (e) {
+    out.textContent = String(e);
+  }
+};
+document.getElementById('configSave').onclick = async function () {
+  const id = document.getElementById('configId').value.trim();
+  const out = document.getElementById('configResult');
+  if (!id) return;
+  try {
+    const text = document.getElementById('configText').value;
+    const res = await apiText('/api/plugins/config?id=' + encodeURIComponent(id), {
+      method: 'POST',
+      headers: {'Content-Type': 'application/yaml'},
+      body: text
+    });
+    out.textContent = res;
+  } catch (e) {
+    out.textContent = String(e);
+  }
+};
+document.getElementById('enablePlugin').onclick = function () { togglePlugin(true); };
+document.getElementById('disablePlugin').onclick = function () { togglePlugin(false); };
+document.getElementById('toolManualLoad').onclick = async function () {
+  const name = document.getElementById('toolName').value.trim();
+  if (!name) return;
+  try {
+    const data = await api('/api/tools/manual?name=' + encodeURIComponent(name));
+    document.getElementById('toolMeta').textContent = data.manual || '(empty)';
+  } catch (e) {
+    document.getElementById('toolMeta').textContent = String(e);
+  }
+};
+document.getElementById('toolSchemaLoad').onclick = async function () {
+  const name = document.getElementById('toolName').value.trim();
+  if (!name) return;
+  try {
+    const text = await apiText('/api/tools/schema?name=' + encodeURIComponent(name));
+    document.getElementById('toolMeta').textContent = text;
+  } catch (e) {
+    document.getElementById('toolMeta').textContent = String(e);
+  }
+};
+document.getElementById('manualLoad').onclick = async function () {
+  const id = document.getElementById('manualId').value.trim();
+  if (!id) return;
+  const pre = document.getElementById('manual');
+  try {
+    const data = await api('/api/plugins/manual?id=' + encodeURIComponent(id));
+    pre.textContent = data.manual || '(empty)'; 
+  } catch (e) {
+    pre.textContent = String(e);
+  }
+};
+async function refresh() {
+  const err = document.getElementById('error');
+  err.textContent = '';
+  try {
+    const status = await api('/api/status');
+    document.getElementById('status').textContent = JSON.stringify(status, null, 2);
+    const plugins = await api('/api/plugins');
+    document.getElementById('plugins').textContent = JSON.stringify(plugins, null, 2);
+    const traces = await api('/api/traces?limit=20');
+    document.getElementById('traces').textContent = JSON.stringify(traces, null, 2);
+  } catch (e) {
+    err.textContent = String(e);
+  }
+}
+refresh();
+setInterval(refresh, 3000);
+</script>
+</body>
+</html>

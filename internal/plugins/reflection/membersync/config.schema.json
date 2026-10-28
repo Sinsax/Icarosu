@@ -1,0 +1,7 @@
+{
+  "type": "object",
+  "properties": {
+    "interval_minutes": {"type": "integer", "default": 60}
+  },
+  "additionalProperties": true
+}

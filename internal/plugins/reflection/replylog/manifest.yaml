@@ -1,0 +1,10 @@
+api_version: 1
+id: reflection.replylog
+version: 0.1.0
+kind: reflection
+name: 回复日志
+description: 记录收到的消息事件
+provides:
+  - reflection.replylog
+requires: []
+manual: MANUAL.md

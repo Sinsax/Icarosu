@@ -1,0 +1,11 @@
+api_version: 1
+id: interface.webui
+version: 0.1.0
+kind: interface
+name: Web 状态页
+description: 只读状态/插件/Trace 页面
+provides:
+  - interface.webui
+requires: []
+config_schema: config.schema.json
+manual: MANUAL.md

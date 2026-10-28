@@ -1,0 +1,14 @@
+api_version: 1
+id: reflection.stylelearn
+version: 0.1.0
+kind: reflection
+name: 表达学习
+description: 采样群消息学习表达方式/口癖
+provides:
+  - reflection.stylelearn
+requires:
+  - kernel.llm
+config_schema: config.schema.json
+permissions:
+  - llm.chat
+manual: MANUAL.md

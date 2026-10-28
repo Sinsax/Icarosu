@@ -1,0 +1,10 @@
+api_version: 1
+id: memory.recent
+version: 0.1.0
+kind: memory
+name: 短期记忆
+description: 每会话最近消息上下文
+provides:
+  - memory.recent
+requires: []
+manual: MANUAL.md

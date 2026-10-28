@@ -1,0 +1,7 @@
+{
+  "type": "object",
+  "properties": {
+    "probability": {"type": "number", "default": 0.8}
+  },
+  "additionalProperties": true
+}

@@ -1,0 +1,8 @@
+{
+  "type": "object",
+  "properties": {
+    "threshold": {"type": "integer", "default": 50},
+    "max_history": {"type": "integer", "default": 100}
+  },
+  "additionalProperties": true
+}
