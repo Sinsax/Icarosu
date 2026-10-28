@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -119,6 +121,7 @@ func WithMetrics(m *obs.Metrics) Option {
 
 // Client 是一个轻量 OpenAI 兼容 Chat Completions 客户端。
 type Client struct {
+	mu      sync.RWMutex
 	config  Config
 	http    *http.Client
 	logger  *slog.Logger
@@ -146,17 +149,14 @@ func (c *Client) Stats() Stats {
 }
 
 func NewClient(cfg Config, logger *slog.Logger, opts ...Option) *Client {
-	timeout := cfg.Timeout
-	if timeout <= 0 {
-		timeout = 30 * time.Second
-	}
 	if logger == nil {
 		logger = slog.Default()
 	}
 
 	c := &Client{
 		config: cfg,
-		http:   &http.Client{Timeout: timeout},
+		// 超时由每次请求的 context 控制，避免热更新时写 http.Client.Timeout 产生竞态。
+		http:   &http.Client{},
 		logger: logger,
 	}
 	for _, opt := range opts {
@@ -167,12 +167,15 @@ func NewClient(cfg Config, logger *slog.Logger, opts ...Option) *Client {
 
 // UpdateConfig 热更新客户端配置（超时、模型、密钥等）。
 func (c *Client) UpdateConfig(cfg Config) {
-	timeout := cfg.Timeout
-	if timeout <= 0 {
-		timeout = 30 * time.Second
-	}
+	c.mu.Lock()
 	c.config = cfg
-	c.http.Timeout = timeout
+	c.mu.Unlock()
+}
+
+func (c *Client) configSnapshot() Config {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.config
 }
 
 // Chat 发送一轮对话，返回模型回复文本（不启用工具调用）。
@@ -192,14 +195,14 @@ func (c *Client) ChatWithTools(ctx context.Context, messages []Message, tools []
 		}
 
 		if resp.Reasoning != "" {
-			c.logger.Info("llm reasoning", "reasoning", resp.Reasoning)
+			c.logger.Debug("llm reasoning", "reasoning", resp.Reasoning)
 		}
 
 		if len(resp.ToolCalls) == 0 {
 			if resp.Content == "" {
 				return "", fmt.Errorf("llm returned empty reply")
 			}
-			c.logger.Info("llm reply", "reply", resp.Content)
+			c.logger.Debug("llm reply", "reply", resp.Content)
 			return resp.Content, nil
 		}
 
@@ -207,7 +210,7 @@ func (c *Client) ChatWithTools(ctx context.Context, messages []Message, tools []
 			return "", fmt.Errorf("llm requested tools but no executor provided")
 		}
 
-		c.logger.Info("tool calls", "count", len(resp.ToolCalls))
+		c.logger.Debug("tool calls", "count", len(resp.ToolCalls))
 		msgs = append(msgs, Message{
 			Role:      "assistant",
 			Content:   resp.Content,
@@ -215,7 +218,7 @@ func (c *Client) ChatWithTools(ctx context.Context, messages []Message, tools []
 		})
 
 		for _, tc := range resp.ToolCalls {
-			c.logger.Info("tool call", "name", tc.Function.Name, "arguments", tc.Function.Arguments)
+			c.logger.Debug("tool call", "name", tc.Function.Name, "arguments", tc.Function.Arguments)
 
 			result, err := executor(ctx, tc.Function.Name, tc.Function.Arguments)
 			if err != nil {
@@ -223,7 +226,7 @@ func (c *Client) ChatWithTools(ctx context.Context, messages []Message, tools []
 				c.logger.Warn("tool call failed", "name", tc.Function.Name, "error", err)
 			}
 
-			c.logger.Info("tool result", "name", tc.Function.Name, "result", result)
+			c.logger.Debug("tool result", "name", tc.Function.Name, "result", result)
 			msgs = append(msgs, Message{
 				Role:       "tool",
 				ToolCallID: tc.ID,
@@ -263,10 +266,15 @@ func shouldRetryLLM(err error) bool {
 	if err == nil {
 		return false
 	}
-	s := err.Error()
-	// 鉴权/参数类错误不重试
-	if strings.Contains(s, "401") || strings.Contains(s, "403") || strings.Contains(s, "400") {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return false
+	}
+	s := err.Error()
+	// 鉴权/参数类错误不重试；只匹配状态码上下文，避免 "4000" 之类误判。
+	for _, code := range []string{"returned 400", "returned 401", "returned 403", "returned 404", "returned 422"} {
+		if strings.Contains(s, code) {
+			return false
+		}
 	}
 	return true
 }
@@ -286,37 +294,45 @@ func (c *Client) Complete(ctx context.Context, messages []Message, tools []Tool)
 		}
 	}()
 
-	if c.config.BaseURL == "" {
+	cfg := c.configSnapshot()
+	if cfg.BaseURL == "" {
 		return nil, fmt.Errorf("llm base_url is empty")
 	}
-	if c.config.Model == "" {
+	if cfg.Model == "" {
 		return nil, fmt.Errorf("llm model is empty")
 	}
 
-	url := strings.TrimRight(c.config.BaseURL, "/") + "/chat/completions"
+	timeout := cfg.Timeout
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+	reqCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	url := strings.TrimRight(cfg.BaseURL, "/") + "/chat/completions"
 
 	body, err := json.Marshal(chatRequest{
-		Model:       c.config.Model,
+		Model:       cfg.Model,
 		Messages:    messages,
 		Tools:       tools,
-		Temperature: c.config.Temperature,
-		MaxTokens:   c.config.MaxTokens,
+		Temperature: cfg.Temperature,
+		MaxTokens:   cfg.MaxTokens,
 		Stream:      false,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("marshal llm request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("create llm request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if c.config.APIKey != "" {
-		req.Header.Set("Authorization", "Bearer "+c.config.APIKey)
+	if cfg.APIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
 	}
 
-	c.logger.Debug("llm request", "model", c.config.Model, "messages", len(messages), "tools", len(tools))
+	c.logger.Debug("llm request", "model", cfg.Model, "messages", len(messages), "tools", len(tools))
 
 	httpResp, err := c.http.Do(req)
 	if err != nil {
@@ -350,7 +366,7 @@ func (c *Client) Complete(ctx context.Context, messages []Message, tools []Tool)
 		c.tokens.Add(int64(result.Usage.TotalTokens))
 	}
 
-	if c.config.LogCache && result.Usage != nil {
+	if cfg.LogCache && result.Usage != nil {
 		hit := result.Usage.PromptCacheHitTokens
 		miss := result.Usage.PromptCacheMissTokens
 		if hit > 0 || miss > 0 {

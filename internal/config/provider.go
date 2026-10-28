@@ -71,7 +71,9 @@ func applyProviderFile(cfg *Config, p *providerFileConfig) error {
 			if cfg.LLM.BaseURL == "" {
 				cfg.LLM.BaseURL = provider.BaseURL
 			}
-			if cfg.LLM.APIKey == "" {
+			if provider.APIKey != "" {
+				// provider 是显式来源，优先于 llm.api_key；这样轮换
+				// providers.<name>.api_key 立即生效。
 				cfg.LLM.APIKey = provider.APIKey
 			}
 			if cfg.LLM.Model != "" && !providerHasModel(provider, cfg.LLM.Model, "llm") {
@@ -87,7 +89,7 @@ func applyProviderFile(cfg *Config, p *providerFileConfig) error {
 			if cfg.VLM.BaseURL == "" {
 				cfg.VLM.BaseURL = provider.BaseURL
 			}
-			if cfg.VLM.APIKey == "" {
+			if provider.APIKey != "" {
 				cfg.VLM.APIKey = provider.APIKey
 			}
 			if cfg.VLM.Model != "" && !providerHasModel(provider, cfg.VLM.Model, "vlm") {

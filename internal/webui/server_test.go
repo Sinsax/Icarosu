@@ -432,6 +432,44 @@ func TestWebUIConfigRawUpdate(t *testing.T) {
 	}
 }
 
+func TestWebUIRawConfigPreservesComments(t *testing.T) {
+	path := writeTestConfig(t, "old")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	commented := "# keep this comment\n" + string(data)
+	if err := os.WriteFile(path, []byte(commented), 0o644); err != nil {
+		t.Fatalf("write commented config: %v", err)
+	}
+	m, err := config.NewManager(path)
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	s := webui.New(m, nil)
+
+	getReq := httptest.NewRequest(http.MethodGet, "/api/config/raw", nil)
+	getRec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(getRec, getReq)
+	if getRec.Code != http.StatusOK {
+		t.Fatalf("GET raw: %d", getRec.Code)
+	}
+	updated := strings.Replace(getRec.Body.String(), `name: "old"`, `name: "new"`, 1)
+	postReq := httptest.NewRequest(http.MethodPost, "/api/config/raw", strings.NewReader(updated))
+	postRec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(postRec, postReq)
+	if postRec.Code != http.StatusOK {
+		t.Fatalf("POST raw: %d %s", postRec.Code, postRec.Body.String())
+	}
+	saved, _ := os.ReadFile(path)
+	if !strings.Contains(string(saved), "# keep this comment") {
+		t.Fatalf("comment lost:\n%s", saved)
+	}
+	if !strings.Contains(string(saved), `name: "new"`) {
+		t.Fatalf("name not updated:\n%s", saved)
+	}
+}
+
 func TestWebUILogsEndpoint(t *testing.T) {
 	m, err := config.NewManager(writeTestConfig(t, "old"))
 	if err != nil {

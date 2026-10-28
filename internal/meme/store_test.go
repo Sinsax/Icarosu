@@ -18,11 +18,12 @@ func TestStoreSaveAndRandom(t *testing.T) {
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
 		_, _ = w.Write([]byte("fake-image-bytes"))
 	}))
 	defer server.Close()
 
-	s, err := meme.Open(dir)
+	s, err := meme.OpenWithOptions(dir, meme.WithAllowPrivate())
 	if err != nil {
 		t.Fatalf("open meme store: %v", err)
 	}

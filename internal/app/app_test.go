@@ -75,6 +75,7 @@ func TestAppNewAndClose(t *testing.T) {
 
 type fakeAdapter struct {
 	started atomic.Bool
+	closed  atomic.Bool
 }
 
 func (f *fakeAdapter) SetMessageHandler(qq.MessageHandler) {}
@@ -84,7 +85,10 @@ func (f *fakeAdapter) Connect(ctx context.Context) error {
 	return nil
 }
 
-func (f *fakeAdapter) Close() error { return nil }
+func (f *fakeAdapter) Close() error {
+	f.closed.Store(true)
+	return nil
+}
 
 func (f *fakeAdapter) SendGroupMessage(context.Context, int64, string) error   { return nil }
 func (f *fakeAdapter) SendPrivateMessage(context.Context, int64, string) error { return nil }
@@ -131,5 +135,8 @@ func TestRunWithFakeAdapter(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("Run did not stop after context cancel")
+	}
+	if !adapter.closed.Load() {
+		t.Fatal("adapter should be closed before Run returns")
 	}
 }

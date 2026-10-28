@@ -3,6 +3,7 @@ package filter
 import (
 	"context"
 	"log/slog"
+	"sync"
 
 	"icarosu/internal/config"
 	"icarosu/internal/plugin"
@@ -12,6 +13,7 @@ import (
 // 它处理群消息和私聊消息：不在允许/黑名单范围内的消息会被直接消费，避免后续插件响应。
 type FilterPlugin struct {
 	plugin.BasePlugin
+	mu     sync.RWMutex
 	cfg    config.FilterConfig
 	logger *slog.Logger
 }
@@ -39,7 +41,9 @@ func New(cfg config.FilterConfig, opts ...Option) *FilterPlugin {
 
 // Update 热更新过滤器配置。
 func (p *FilterPlugin) Update(cfg config.FilterConfig) {
+	p.mu.Lock()
 	p.cfg = cfg
+	p.mu.Unlock()
 }
 
 func (p *FilterPlugin) Name() string {
@@ -60,16 +64,19 @@ func (p *FilterPlugin) Stage() plugin.Stage {
 }
 
 func (p *FilterPlugin) Handle(_ context.Context, _ plugin.Bot, e *plugin.Event) bool {
-	if !p.cfg.Enabled {
+	p.mu.RLock()
+	cfg := p.cfg
+	p.mu.RUnlock()
+	if !cfg.Enabled {
 		return false
 	}
 
 	var allowed bool
 	switch e.Type {
 	case plugin.EventGroupMessage:
-		allowed = p.allowedByMode(e.GroupID, p.cfg.GroupIDs)
+		allowed = allowedByMode(cfg, e.GroupID, cfg.GroupIDs)
 	case plugin.EventPrivateMessage:
-		allowed = p.allowedByMode(e.UserID, p.cfg.UserIDs)
+		allowed = allowedByMode(cfg, e.UserID, cfg.UserIDs)
 	default:
 		return false
 	}
@@ -99,8 +106,8 @@ func (p *FilterPlugin) Handle(_ context.Context, _ plugin.Bot, e *plugin.Event) 
 	return false
 }
 
-func (p *FilterPlugin) allowedByMode(id int64, ids []int64) bool {
-	switch p.cfg.Mode {
+func allowedByMode(cfg config.FilterConfig, id int64, ids []int64) bool {
+	switch cfg.Mode {
 	case "deny":
 		return !contains(ids, id)
 	default:

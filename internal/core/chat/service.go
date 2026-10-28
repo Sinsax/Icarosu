@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"regexp"
 	"strings"
+	"sync"
 
 	"icarosu/internal/core/domain"
 	"icarosu/internal/llm"
@@ -67,6 +68,7 @@ type StyleLibrary interface {
 
 // Service 是聊天回复核心服务，负责构造送入 LLM 的上下文消息和对回复做拟人化后处理。
 type Service struct {
+	mu           sync.RWMutex
 	systemPrompt string
 	mem          Memory
 	store        store.ChatContextStore
@@ -170,7 +172,15 @@ func (s *Service) UpdatePersona(prompt string) {
 	if prompt == "" {
 		return
 	}
+	s.mu.Lock()
 	s.systemPrompt = prompt
+	s.mu.Unlock()
+}
+
+func (s *Service) personaPrompt() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.systemPrompt
 }
 
 // detectStyleTags 从最近聊天中粗略识别群聊风格标签。
@@ -465,7 +475,7 @@ func keyFor(m *domain.ChatMessage) int64 {
 // buildMessages 是 BuildMessages 的内部实现。
 func buildMessages(ctx context.Context, s *Service, m *domain.ChatMessage, currentMessage string) []llm.Message {
 	messages := []llm.Message{
-		{Role: "system", Content: s.systemPrompt},
+		{Role: "system", Content: s.personaPrompt()},
 	}
 
 	tags := s.detectStyleTags(m)

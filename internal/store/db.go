@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	_ "modernc.org/sqlite"
 
@@ -34,6 +35,9 @@ func Open(cfg config.StoreConfig) (*Store, error) {
 		}
 	}
 
+	if driver == "sqlite" {
+		dsn = sqliteDSN(dsn)
+	}
 	db, err := sql.Open(driver, dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open store: %w", err)
@@ -41,6 +45,13 @@ func Open(cfg config.StoreConfig) (*Store, error) {
 	if err := db.Ping(); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("ping store: %w", err)
+	}
+
+	if driver == "sqlite" {
+		// 这些 PRAGMA 是连接级的；必须写进 DSN，否则连接池中新开的连接
+		// 不会继承 foreign_keys/busy_timeout。
+		db.SetMaxOpenConns(4)
+		db.SetMaxIdleConns(4)
 	}
 
 	s := &Store{db: db}
@@ -51,62 +62,77 @@ func Open(cfg config.StoreConfig) (*Store, error) {
 	return s, nil
 }
 
+func sqliteDSN(dsn string) string {
+	if dsn == "" {
+		dsn = "data/bot.db"
+	}
+	if dsn == ":memory:" {
+		dsn = "file::memory:?cache=shared"
+	}
+	if !strings.HasPrefix(dsn, "file:") && !strings.Contains(dsn, "mode=memory") {
+		dsn = "file:" + dsn
+	}
+	if !strings.Contains(dsn, "_pragma=") {
+		sep := "?"
+		if strings.Contains(dsn, "?") {
+			sep = "&"
+		}
+		dsn += sep + "_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)"
+	}
+	return dsn
+}
+
 func (s *Store) migrate() error {
-	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)`); err != nil {
+	if _, err := s.db.Exec("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)"); err != nil {
 		return fmt.Errorf("create schema_version: %w", err)
 	}
 
 	var version int
-	if err := s.db.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_version`).Scan(&version); err != nil {
+	if err := s.db.QueryRow("SELECT COALESCE(MAX(version), 0) FROM schema_version").Scan(&version); err != nil {
 		return fmt.Errorf("read schema version: %w", err)
 	}
 
-	if version < 1 {
-		for _, stmt := range allSchemaStatements() {
-			if _, err := s.db.Exec(stmt); err != nil {
-				return fmt.Errorf("migrate store to v1: %w", err)
-			}
-		}
-		if _, err := s.db.Exec(`INSERT INTO schema_version (version) VALUES (1)`); err != nil {
-			return fmt.Errorf("write schema version: %w", err)
-		}
-		version = 1
+	migrations := []struct {
+		version    int
+		statements []string
+	}{
+		{1, allSchemaStatements()},
+		{2, v2SchemaStatements()},
+		{3, v3SchemaStatements()},
+		{4, v4SchemaStatements()},
 	}
-
-	if version < 2 {
-		for _, stmt := range v2SchemaStatements() {
-			if _, err := s.db.Exec(stmt); err != nil {
-				return fmt.Errorf("migrate store to v2: %w", err)
-			}
+	for _, m := range migrations {
+		if version >= m.version {
+			continue
 		}
-		if _, err := s.db.Exec(`INSERT INTO schema_version (version) VALUES (2)`); err != nil {
-			return fmt.Errorf("write schema version: %w", err)
+		if err := s.applyMigration(m.version, m.statements); err != nil {
+			return err
 		}
-		version = 2
+		version = m.version
 	}
+	return nil
+}
 
-	if version < 3 {
-		for _, stmt := range v3SchemaStatements() {
-			if _, err := s.db.Exec(stmt); err != nil {
-				return fmt.Errorf("migrate store to v3: %w", err)
-			}
-		}
-		if _, err := s.db.Exec(`INSERT INTO schema_version (version) VALUES (3)`); err != nil {
-			return fmt.Errorf("write schema version: %w", err)
-		}
+// applyMigration 在单个事务里执行一个版本的 DDL + 版本号写入。
+// 失败会整体回滚，避免留下“迁移到一半”的 schema。
+func (s *Store) applyMigration(version int, statements []string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin migrate v%d: %w", version, err)
 	}
+	defer func() { _ = tx.Rollback() }()
 
-	if version < 4 {
-		for _, stmt := range v4SchemaStatements() {
-			if _, err := s.db.Exec(stmt); err != nil {
-				return fmt.Errorf("migrate store to v4: %w", err)
-			}
-		}
-		if _, err := s.db.Exec(`INSERT INTO schema_version (version) VALUES (4)`); err != nil {
-			return fmt.Errorf("write schema version: %w", err)
+	for _, stmt := range statements {
+		if _, err := tx.Exec(stmt); err != nil {
+			return fmt.Errorf("migrate store to v%d: %w", version, err)
 		}
 	}
-
+	if _, err := tx.Exec("INSERT INTO schema_version (version) VALUES (?)", version); err != nil {
+		return fmt.Errorf("write schema version v%d: %w", version, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit migrate v%d: %w", version, err)
+	}
 	return nil
 }
 

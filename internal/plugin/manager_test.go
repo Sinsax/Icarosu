@@ -158,6 +158,44 @@ func TestManagerDispatchRunsStagesInOrder(t *testing.T) {
 	}
 }
 
+type lifecyclePlugin struct {
+	testPlugin
+	inits int
+	stops int
+}
+
+func (p *lifecyclePlugin) Init(ctx context.Context, bot plugin.Bot) error {
+	p.inits++
+	return nil
+}
+func (p *lifecyclePlugin) Stop(ctx context.Context) error {
+	p.stops++
+	return nil
+}
+
+func TestManagerSetEnabledRunsLifecycle(t *testing.T) {
+	m := plugin.NewManager()
+	p := &lifecyclePlugin{testPlugin: testPlugin{name: "life", priority: 1}}
+	m.Register(p)
+	if err := m.Start(context.Background(), &mockBot{}); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if p.inits != 1 {
+		t.Fatalf("expected one init, got %d", p.inits)
+	}
+	m.SetEnabled("life", false)
+	if p.stops != 1 {
+		t.Fatalf("expected one stop, got %d", p.stops)
+	}
+	m.SetEnabled("life", true)
+	if p.inits != 2 {
+		t.Fatalf("expected re-init, got %d", p.inits)
+	}
+	if err := m.Stop(context.Background()); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+}
+
 func TestManagerSetEnabledSkipsDisabled(t *testing.T) {
 	m := plugin.NewManager()
 	var order []string
@@ -278,4 +316,29 @@ func TestRegistryRejectsDuplicateNames(t *testing.T) {
 		}
 	}()
 	r.Register(&testPlugin{name: "x"})
+}
+
+func TestManagerRecoversPluginPanic(t *testing.T) {
+	m := plugin.NewManager()
+	var nextRan bool
+	m.Register(&testPlugin{
+		name:     "panics",
+		priority: 10,
+		handle: func(e *plugin.Event) bool {
+			panic("boom")
+		},
+	})
+	m.Register(&testPlugin{
+		name:     "next",
+		priority: 0,
+		handle: func(e *plugin.Event) bool {
+			nextRan = true
+			return false
+		},
+	})
+
+	m.Dispatch(context.Background(), &mockBot{}, &plugin.Event{})
+	if !nextRan {
+		t.Fatal("dispatch should continue after a plugin panic")
+	}
 }

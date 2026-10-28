@@ -62,9 +62,12 @@ func New(bot plugin.Bot, manager *plugin.Manager, selfID int64, logger *slog.Log
 }
 
 // lockFor 返回某个会话的串行锁，保证同一个会话内的消息按顺序处理。
-func (h *Handler) lockFor(key int64) *session.Session {
-	return h.sessions.Get(key)
+func (h *Handler) lockFor(key string) *session.Session {
+	return h.sessions.Acquire(key)
 }
+
+func groupKey(id int64) string { return fmt.Sprintf("group:%d", id) }
+func userKey(id int64) string  { return fmt.Sprintf("user:%d", id) }
 
 // Handle 处理一个 OneBot 事件。
 func (h *Handler) Handle(ctx context.Context, evt qq.Event) {
@@ -103,10 +106,11 @@ func (h *Handler) handleMessage(ctx context.Context, evt qq.Event) {
 			h.logger.Debug("message rate limited", "group_id", evt.GroupID)
 			return
 		}
-		lock := h.lockFor(evt.GroupID)
+		lock := h.lockFor(groupKey(evt.GroupID))
+		defer lock.Release()
 		lock.Lock()
+		defer lock.Unlock()
 		h.manager.Dispatch(ctx, h.bot, e)
-		lock.Unlock()
 	case "private":
 		e := &plugin.Event{
 			Type:             plugin.EventPrivateMessage,
@@ -119,10 +123,11 @@ func (h *Handler) handleMessage(ctx context.Context, evt qq.Event) {
 			ReplyToUserID:    extractReplyUserID(evt),
 			Raw:              mustRaw(evt),
 		}
-		lock := h.lockFor(evt.UserID)
+		lock := h.lockFor(userKey(evt.UserID))
+		defer lock.Release()
 		lock.Lock()
+		defer lock.Unlock()
 		h.manager.Dispatch(ctx, h.bot, e)
-		lock.Unlock()
 	default:
 		h.logger.Debug("unhandled message_type", "message_type", evt.MessageType)
 	}
@@ -134,6 +139,14 @@ func (h *Handler) handleMeta(ctx context.Context, evt qq.Event) {
 }
 
 func (h *Handler) handleNotice(ctx context.Context, evt qq.Event) {
+	// notice 与同群消息走同一把会话锁，避免撤回/通知和消息并发改写上下文。
+	if evt.GroupID != 0 {
+		lock := h.lockFor(groupKey(evt.GroupID))
+		defer lock.Release()
+		lock.Lock()
+		defer lock.Unlock()
+	}
+
 	if evt.NoticeType == "group_recall" {
 		e := &plugin.Event{
 			Type:       plugin.EventGroupRecall,

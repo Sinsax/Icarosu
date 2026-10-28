@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"gopkg.in/yaml.v3"
+
 	"icarosu/internal/config"
 )
 
@@ -77,6 +79,94 @@ func TestWriteSplitSeparatesLLM(t *testing.T) {
 	}
 	if loaded.LLM.Model != "split-llm-model" || loaded.VLM.Model != "split-vlm-model" {
 		t.Fatalf("unexpected loaded llm/vlm: %+v %+v", loaded.LLM, loaded.VLM)
+	}
+}
+
+func TestRestoreSecretsYAMLAddsMissing(t *testing.T) {
+	old := &config.Config{}
+	old.WebUI.Token = "secret-token"
+	out, err := config.RestoreSecretsYAML([]byte("version: 12\nwebui:\n  enabled: true\n"), old)
+	if err != nil {
+		t.Fatalf("RestoreSecretsYAML: %v", err)
+	}
+	var cfg config.Config
+	if err := yaml.Unmarshal(out, &cfg); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if cfg.WebUI.Token != "secret-token" {
+		t.Fatalf("missing token not restored: %q", cfg.WebUI.Token)
+	}
+
+	out, err = config.RestoreSecretsYAML([]byte("version: 12\nwebui:\n  token: new-value\n"), &config.Config{})
+	if err != nil {
+		t.Fatalf("RestoreSecretsYAML: %v", err)
+	}
+	if err := yaml.Unmarshal(out, &cfg); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if cfg.WebUI.Token != "new-value" {
+		t.Fatalf("old empty secret should not clear new value: %q", cfg.WebUI.Token)
+	}
+}
+
+func TestRestoreSecretsDoesNotCreateSplitSections(t *testing.T) {
+	old := &config.Config{}
+	old.LLM.APIKey = "secret"
+	out, err := config.RestoreSecretsYAML([]byte("version: 12\nqq:\n  onebot:\n    ws_url: ws://x\n"), old)
+	if err != nil {
+		t.Fatalf("RestoreSecretsYAML: %v", err)
+	}
+	if strings.Contains(string(out), "llm:") {
+		t.Fatalf("must not create llm section in split main config:\n%s", out)
+	}
+}
+
+func TestValidateProviderPath(t *testing.T) {
+	if err := config.ValidateProviderPath("/tmp/config/config.yaml", "llm.yaml"); err != nil {
+		t.Fatalf("relative path should be allowed: %v", err)
+	}
+	if err := config.ValidateProviderPath("/tmp/config/config.yaml", "../llm.yaml"); err == nil {
+		t.Fatal("parent path should be rejected")
+	}
+	if err := config.ValidateProviderPath("/tmp/config/config.yaml", "/etc/llm.yaml"); err == nil {
+		t.Fatal("absolute path should be rejected")
+	}
+}
+
+func TestProviderKeyRotationTakesEffect(t *testing.T) {
+	dir := t.TempDir()
+	mainPath := filepath.Join(dir, "config.yaml")
+	llmPath := filepath.Join(dir, "llm.yaml")
+	main := "version: 12\nllm_config_file: llm.yaml\nqq:\n  onebot:\n    ws_url: ws://127.0.0.1:6700\n"
+	if err := os.WriteFile(mainPath, []byte(main), 0o644); err != nil {
+		t.Fatalf("write main: %v", err)
+	}
+	llm := "providers:\n  qwen:\n    api_key: old-key\nllm:\n  provider: qwen\n  api_key: old-key\n"
+	if err := os.WriteFile(llmPath, []byte(llm), 0o644); err != nil {
+		t.Fatalf("write llm: %v", err)
+	}
+
+	cfg, err := config.Load(mainPath)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.LLM.APIKey != "old-key" {
+		t.Fatalf("unexpected initial key: %q", cfg.LLM.APIKey)
+	}
+	if err := config.WriteSplit(cfg, mainPath); err != nil {
+		t.Fatalf("WriteSplit: %v", err)
+	}
+
+	rotated := "providers:\n  qwen:\n    api_key: new-key\nllm:\n  provider: qwen\n  api_key: old-key\n"
+	if err := os.WriteFile(llmPath, []byte(rotated), 0o644); err != nil {
+		t.Fatalf("rotate: %v", err)
+	}
+	loaded, err := config.Load(mainPath)
+	if err != nil {
+		t.Fatalf("Load rotated: %v", err)
+	}
+	if loaded.LLM.APIKey != "new-key" {
+		t.Fatalf("provider key should win, got %q", loaded.LLM.APIKey)
 	}
 }
 

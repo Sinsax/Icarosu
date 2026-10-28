@@ -369,18 +369,32 @@ func (a *App) Run(ctx context.Context) error {
 	}
 
 	a.client.SetMessageHandler(func(ctx context.Context, evt qq.Event) {
-		_ = a.eventPool.Submit(ctx, func(ctx context.Context) {
+		if err := a.eventPool.TrySubmit(ctx, func(ctx context.Context) {
 			a.handler.Handle(ctx, evt)
-		})
+		}); err != nil {
+			a.log.Warn("drop event: event pool unavailable", "error", err)
+		}
 	})
 
 	if err := a.manager.Start(ctx, a.botForPlugins); err != nil {
 		return fmt.Errorf("start plugins: %w", err)
 	}
 	defer func() {
-		_ = a.manager.Stop(context.Background())
+		stopCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_ = a.manager.Stop(stopCtx)
 	}()
-	defer a.eventPool.Close()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_ = a.eventPool.CloseWithContext(ctx)
+	}()
+	// 先停 adapter，再有界排空队列，最后逆序停插件。
+	defer func() {
+		if a.client != nil {
+			_ = a.client.Close()
+		}
+	}()
 
 	a.log.Info("connecting to OneBot", "url", a.cfgMgr.Get().QQ.OneBot.WSURL)
 	if err := a.client.Connect(ctx); err != nil {
@@ -399,13 +413,18 @@ func (a *App) Close() error {
 	if a.cancel != nil {
 		a.cancel()
 	}
+	if a.client != nil {
+		_ = a.client.Close()
+	}
 	a.wg.Wait()
 
 	if a.webServer != nil {
 		_ = a.webServer.Close()
 	}
 	if a.eventPool != nil {
-		a.eventPool.Close()
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		_ = a.eventPool.CloseWithContext(ctx)
+		cancel()
 	}
 	if a.st != nil {
 		return a.st.Close()

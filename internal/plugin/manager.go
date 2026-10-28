@@ -3,8 +3,10 @@ package plugin
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sort"
 	"sync"
+	"time"
 )
 
 // Manager 负责插件的注册、生命周期管理和事件分发。
@@ -12,6 +14,8 @@ type Manager struct {
 	mu       sync.RWMutex
 	plugins  []Plugin
 	disabled map[string]bool
+	bot      Bot
+	started  bool
 }
 
 // PluginState 是插件运行状态，用于管理界面展示和热开关。
@@ -37,14 +41,38 @@ func (m *Manager) Register(p Plugin) {
 	m.plugins = append(m.plugins, p)
 }
 
-// SetEnabled 动态启用或禁用插件。
+// SetEnabled 动态启用或禁用插件；运行期会调用插件的 Init/Stop。
 func (m *Manager) SetEnabled(name string, enabled bool) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
+	var target Plugin
+	for _, p := range m.plugins {
+		if p.Name() == name {
+			target = p
+			break
+		}
+	}
+	if target == nil {
+		m.mu.Unlock()
+		return
+	}
+	wasEnabled := !m.disabled[name]
 	if enabled {
 		delete(m.disabled, name)
 	} else {
 		m.disabled[name] = true
+	}
+	started, bot := m.started, m.bot
+	m.mu.Unlock()
+
+	if !started || wasEnabled == enabled {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if enabled {
+		_ = safeInit(ctx, bot, target)
+	} else {
+		_ = safeStop(ctx, target)
 	}
 }
 
@@ -81,11 +109,23 @@ func (m *Manager) Start(ctx context.Context, bot Bot) error {
 
 	sortPlugins(plugins)
 
+	m.mu.Lock()
+	m.bot = bot
+	m.mu.Unlock()
+
+	inited := make([]Plugin, 0, len(plugins))
 	for _, p := range plugins {
-		if err := p.Init(ctx, bot); err != nil {
+		if err := safeInit(ctx, bot, p); err != nil {
+			for i := len(inited) - 1; i >= 0; i-- {
+				_ = safeStop(ctx, inited[i])
+			}
 			return fmt.Errorf("init plugin %q: %w", p.Name(), err)
 		}
+		inited = append(inited, p)
 	}
+	m.mu.Lock()
+	m.started = true
+	m.mu.Unlock()
 	return nil
 }
 
@@ -96,13 +136,17 @@ func (m *Manager) Stop(ctx context.Context) error {
 	m.mu.RUnlock()
 
 	sortPlugins(plugins)
+	m.mu.Lock()
+	m.started = false
+	m.mu.Unlock()
+	var firstErr error
 	for i := len(plugins) - 1; i >= 0; i-- {
 		p := plugins[i]
-		if err := p.Stop(ctx); err != nil {
-			return fmt.Errorf("stop plugin %q: %w", p.Name(), err)
+		if err := safeStop(ctx, p); err != nil && firstErr == nil {
+			firstErr = fmt.Errorf("stop plugin %q: %w", p.Name(), err)
 		}
 	}
-	return nil
+	return firstErr
 }
 
 // Dispatch 按流水线阶段分发事件：
@@ -145,7 +189,31 @@ func (m *Manager) Dispatch(ctx context.Context, bot Bot, e *Event) {
 	}
 }
 
-func (m *Manager) handlePlugin(ctx context.Context, bot Bot, p Plugin, e *Event, pc *Context) bool {
+func safeInit(ctx context.Context, bot Bot, p Plugin) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("panic: %v", r)
+		}
+	}()
+	return p.Init(ctx, bot)
+}
+
+func safeStop(ctx context.Context, p Plugin) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("panic: %v", r)
+		}
+	}()
+	return p.Stop(ctx)
+}
+
+func (m *Manager) handlePlugin(ctx context.Context, bot Bot, p Plugin, e *Event, pc *Context) (handled bool) {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("plugin panic", "plugin", p.Name(), "panic", r)
+			handled = false
+		}
+	}()
 	if cp, ok := p.(ContextualPlugin); ok {
 		return cp.HandleContext(ctx, bot, pc)
 	}

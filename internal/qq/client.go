@@ -52,6 +52,8 @@ func (c *Client) SetMessageHandler(h MessageHandler) {
 
 // Connect 建立 WebSocket 连接并启动读取循环。
 func (c *Client) Connect(ctx context.Context) error {
+	// Close 后允许重新 Connect；生命周期由调用方串行化。
+	c.closeOnce = sync.Once{}
 	c.closed.Store(false)
 
 	header := http.Header{}
@@ -59,19 +61,33 @@ func (c *Client) Connect(ctx context.Context) error {
 		header.Set("Authorization", "Bearer "+c.token)
 	}
 
-	conn, _, err := websocket.DefaultDialer.DialContext(ctx, c.url, header)
-	if err != nil {
-		return fmt.Errorf("dial onebot ws %q: %w", c.url, err)
+	backoff := time.Second
+	for attempt := 0; ; attempt++ {
+		conn, _, err := websocket.DefaultDialer.DialContext(ctx, c.url, header)
+		if err == nil {
+			c.connMu.Lock()
+			c.conn = conn
+			c.connMu.Unlock()
+			c.logger.Info("onebot connected", "url", c.url)
+			go c.readLoop(ctx)
+			return nil
+		}
+		if c.closed.Load() {
+			return fmt.Errorf("dial onebot ws %q: %w", c.url, err)
+		}
+		c.logger.Warn("onebot initial connect failed", "attempt", attempt+1, "error", err, "retry_in", backoff.String())
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("dial onebot ws %q: %w", c.url, err)
+		case <-time.After(backoff):
+		}
+		if backoff < 15*time.Second {
+			backoff *= 2
+			if backoff > 15*time.Second {
+				backoff = 15 * time.Second
+			}
+		}
 	}
-
-	c.connMu.Lock()
-	c.conn = conn
-	c.connMu.Unlock()
-
-	c.logger.Info("onebot connected", "url", c.url)
-	go c.readLoop(ctx)
-
-	return nil
 }
 
 // Close 关闭连接。
@@ -85,48 +101,78 @@ func (c *Client) Close() error {
 		if conn != nil {
 			err = conn.Close()
 		}
+		// 唤醒仍在等待 API 响应的调用方，避免它们只能等 ctx 超时。
+		c.pendingMu.Lock()
+		for echo, ch := range c.pending {
+			delete(c.pending, echo)
+			close(ch)
+		}
+		c.pendingMu.Unlock()
 	})
 	return err
 }
 
-// SendGroupMessage 发送群消息。
-func (c *Client) SendGroupMessage(ctx context.Context, groupID int64, message string) error {
-	_, err := c.sendRequest(ctx, "send_group_msg", map[string]any{
+// SendGroupRaw 发送群消息；message 可以是字符串或 OneBot 消息段数组。
+func (c *Client) SendGroupRaw(ctx context.Context, groupID int64, message any) error {
+	return c.sendAPI(ctx, "send_group_msg", map[string]any{
 		"group_id": groupID,
 		"message":  message,
 	})
-	return err
 }
 
-// SendPrivateMessage 发送私聊消息。
-func (c *Client) SendPrivateMessage(ctx context.Context, userID int64, message string) error {
-	_, err := c.sendRequest(ctx, "send_private_msg", map[string]any{
+// SendPrivateRaw 发送私聊消息；message 可以是字符串或 OneBot 消息段数组。
+func (c *Client) SendPrivateRaw(ctx context.Context, userID int64, message any) error {
+	return c.sendAPI(ctx, "send_private_msg", map[string]any{
 		"user_id": userID,
 		"message": message,
 	})
-	return err
+}
+
+func (c *Client) sendAPI(ctx context.Context, action string, params map[string]any) error {
+	data, err := c.sendRequestWithResponse(ctx, action, params)
+	if err != nil {
+		return err
+	}
+	var resp struct {
+		Status  string `json:"status"`
+		Retcode int    `json:"retcode"`
+		Wording string `json:"wording"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(data, &resp); err == nil {
+		if resp.Status == "failed" || resp.Retcode != 0 {
+			msg := resp.Wording
+			if msg == "" {
+				msg = resp.Message
+			}
+			return fmt.Errorf("onebot %s failed: retcode=%d %s", action, resp.Retcode, msg)
+		}
+	}
+	return nil
+}
+
+// SendGroupMessage 发送群文本消息。
+func (c *Client) SendGroupMessage(ctx context.Context, groupID int64, message string) error {
+	return c.SendGroupRaw(ctx, groupID, message)
+}
+
+// SendPrivateMessage 发送私聊文本消息。
+func (c *Client) SendPrivateMessage(ctx context.Context, userID int64, message string) error {
+	return c.SendPrivateRaw(ctx, userID, message)
 }
 
 // SendGroupImage 发送群图片消息。
 func (c *Client) SendGroupImage(ctx context.Context, groupID int64, file string) error {
-	_, err := c.sendRequest(ctx, "send_group_msg", map[string]any{
-		"group_id": groupID,
-		"message": []map[string]any{
-			{"type": "image", "data": map[string]any{"file": file}},
-		},
+	return c.SendGroupRaw(ctx, groupID, []map[string]any{
+		{"type": "image", "data": map[string]any{"file": file}},
 	})
-	return err
 }
 
 // SendPrivateImage 发送私聊图片消息。
 func (c *Client) SendPrivateImage(ctx context.Context, userID int64, file string) error {
-	_, err := c.sendRequest(ctx, "send_private_msg", map[string]any{
-		"user_id": userID,
-		"message": []map[string]any{
-			{"type": "image", "data": map[string]any{"file": file}},
-		},
+	return c.SendPrivateRaw(ctx, userID, []map[string]any{
+		{"type": "image", "data": map[string]any{"file": file}},
 	})
-	return err
 }
 
 func (c *Client) readLoop(ctx context.Context) {
@@ -171,7 +217,7 @@ func (c *Client) readLoop(ctx context.Context) {
 						c.logger.Error("handler panic", "panic", r)
 					}
 				}()
-				c.handler(context.Background(), evt)
+				c.handler(ctx, evt)
 			}()
 		}
 	}

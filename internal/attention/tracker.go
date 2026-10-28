@@ -44,42 +44,46 @@ func (t *Tracker) Update(cfg config.AttentionConfig) {
 // Observe 根据一条消息更新注意力。
 // atBot: 是否 @ 了机器人；mentioned: 是否提到了 bot 名字；interested: 是否命中兴趣。
 func (t *Tracker) Observe(key int64, atBot, mentioned, interested bool) {
-	if !t.cfg.Enabled {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	cfg := t.cfg
+	if !cfg.Enabled {
 		return
 	}
 	var boost float64
 	if atBot {
-		boost += t.cfg.BoostAtBot
+		boost += cfg.BoostAtBot
 	}
 	if mentioned {
-		boost += t.cfg.BoostMention
+		boost += cfg.BoostMention
 	}
 	if interested {
-		boost += t.cfg.BoostInterest
+		boost += cfg.BoostInterest
 	}
 	if boost == 0 {
 		return
 	}
 
-	t.mu.Lock()
-	defer t.mu.Unlock()
 	now := time.Now()
 	t.applyDecayLocked(key, now)
-	t.score[key] = clamp(t.score[key]+boost, 0, t.cfg.MaxScore)
+	t.score[key] = clamp(t.score[key]+boost, 0, cfg.MaxScore)
 	t.last[key] = now
 	t.checkTripLocked(key, now)
 }
 
 // OnBotReplied 在机器人回复后提升注意力。
 func (t *Tracker) OnBotReplied(key int64) {
-	if !t.cfg.Enabled {
-		return
-	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
+
+	cfg := t.cfg
+	if !cfg.Enabled {
+		return
+	}
 	now := time.Now()
 	t.applyDecayLocked(key, now)
-	t.score[key] = clamp(t.score[key]+t.cfg.BoostBotReplied, 0, t.cfg.MaxScore)
+	t.score[key] = clamp(t.score[key]+cfg.BoostBotReplied, 0, cfg.MaxScore)
 	t.last[key] = now
 	t.checkTripLocked(key, now)
 }
@@ -107,15 +111,20 @@ func (t *Tracker) Score(key int64) float64 {
 
 // EffectiveProbability 根据注意力调整基础随机回复概率。
 func (t *Tracker) EffectiveProbability(key int64, base float64) float64 {
-	if !t.cfg.Enabled {
+	t.mu.Lock()
+	cfg := t.cfg
+	t.applyDecayLocked(key, time.Now())
+	score := t.score[key]
+	t.mu.Unlock()
+
+	if !cfg.Enabled {
 		return base
 	}
-	score := t.Score(key)
-	if t.cfg.MaxScore <= 0 {
+	if cfg.MaxScore <= 0 {
 		return base
 	}
 	// 注意力满时最多额外增加 0.2 概率
-	boost := (score / t.cfg.MaxScore) * 0.2
+	boost := (score / cfg.MaxScore) * 0.2
 	prob := base + boost
 	if prob > 0.5 {
 		prob = 0.5
@@ -125,15 +134,21 @@ func (t *Tracker) EffectiveProbability(key int64, base float64) float64 {
 
 // CooldownSeconds 根据注意力缩短冷却时间。
 func (t *Tracker) CooldownSeconds(key int64, base int) int {
-	if !t.cfg.Enabled || base <= 0 {
+	if base <= 0 {
 		return base
 	}
-	score := t.Score(key)
-	if t.cfg.MaxScore <= 0 {
+
+	t.mu.Lock()
+	cfg := t.cfg
+	t.applyDecayLocked(key, time.Now())
+	score := t.score[key]
+	t.mu.Unlock()
+
+	if !cfg.Enabled || cfg.MaxScore <= 0 {
 		return base
 	}
 	// 注意力越高，冷却越短，最高缩短一半
-	reduced := float64(base) * (1 - 0.5*score/t.cfg.MaxScore)
+	reduced := float64(base) * (1 - 0.5*score/cfg.MaxScore)
 	if reduced < 1 {
 		reduced = 1
 	}

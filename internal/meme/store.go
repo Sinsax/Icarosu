@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"io"
 	"math/rand"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,13 +17,21 @@ import (
 
 // Store 是本地表情包库。
 type Store struct {
-	dir   string
-	mu    sync.RWMutex
-	items []string
+	dir          string
+	allowPrivate bool
+	mu           sync.RWMutex
+	items        []string
 }
 
+type Option func(*Store)
+
+// WithAllowPrivate 允许从私网地址下载（仅测试/内网部署使用）。
+func WithAllowPrivate() Option { return func(s *Store) { s.allowPrivate = true } }
+
 // Open 打开（或创建）表情包目录，并扫描已有文件。
-func Open(dir string) (*Store, error) {
+func Open(dir string) (*Store, error) { return OpenWithOptions(dir) }
+
+func OpenWithOptions(dir string, opts ...Option) (*Store, error) {
 	if dir == "" {
 		dir = "data/memes"
 	}
@@ -35,6 +45,9 @@ func Open(dir string) (*Store, error) {
 	}
 
 	s := &Store{dir: dir}
+	for _, opt := range opts {
+		opt(s)
+	}
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
@@ -44,17 +57,55 @@ func Open(dir string) (*Store, error) {
 	return s, nil
 }
 
+func validateRemoteURL(raw string, allowPrivate bool) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("invalid image url: %w", err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("image url must be http(s), got %q", u.Scheme)
+	}
+	host := u.Hostname()
+	if host == "" {
+		return fmt.Errorf("image url has no host")
+	}
+	ips, err := net.LookupIP(host)
+	if err != nil {
+		return fmt.Errorf("resolve image host: %w", err)
+	}
+	if !allowPrivate {
+		for _, ip := range ips {
+			if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsUnspecified() {
+				return fmt.Errorf("image url points to a private address")
+			}
+		}
+	}
+	return nil
+}
+
 // SaveFromURL 下载一张图片并保存到表情库。
 func (s *Store) SaveFromURL(ctx context.Context, url string) (string, error) {
 	if url == "" {
 		return "", fmt.Errorf("empty image url")
+	}
+	if err := validateRemoteURL(url, s.allowPrivate); err != nil {
+		return "", err
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return "", err
 	}
-	resp, err := http.DefaultClient.Do(req)
+	client := &http.Client{
+		Timeout: 15 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 3 {
+				return fmt.Errorf("too many redirects")
+			}
+			return validateRemoteURL(req.URL.String(), s.allowPrivate)
+		},
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("download image: %w", err)
 	}
@@ -63,14 +114,21 @@ func (s *Store) SaveFromURL(ctx context.Context, url string) (string, error) {
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return "", fmt.Errorf("download image returned %d", resp.StatusCode)
 	}
+	ct := resp.Header.Get("Content-Type")
+	if ct != "" && !strings.HasPrefix(strings.ToLower(ct), "image/") {
+		return "", fmt.Errorf("download returned non-image content type %q", ct)
+	}
 
 	ext := extFromURL(url)
 	name := fmt.Sprintf("meme_%d_%04d%s", time.Now().UnixNano(), rand.Intn(10000), ext)
 	path := filepath.Join(s.dir, name)
 
-	data, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
+	data, err := io.ReadAll(io.LimitReader(resp.Body, (10<<20)+1))
 	if err != nil {
 		return "", fmt.Errorf("read image: %w", err)
+	}
+	if len(data) > 10<<20 {
+		return "", fmt.Errorf("image exceeds 10 MiB limit")
 	}
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		return "", fmt.Errorf("save image: %w", err)
